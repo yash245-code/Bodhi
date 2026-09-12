@@ -18,14 +18,14 @@
     "skipLibCheck": true,
     "baseUrl": ".",
     "paths": {
-      "@renderer/*": ["src/renderer/src/*"],
-      "@shared/*": ["src/shared/*"]
+      "@renderer/*": ["../frontend/src/*"],
+      "@shared/*": ["../shared/*"]
     }
   },
   "include": [
-    "src/renderer/src/**/*",
-    "src/renderer/src/env.d.ts",
-    "src/preload/index.d.ts",
-    "src/shared/**/*"
+    "../frontend/src/**/*",
+    "../frontend/src/env.d.ts",
+    "../preload/index.d.ts",
+    "../shared/**/*"
   ]
 }

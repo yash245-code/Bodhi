@@ -11,13 +11,13 @@
     "lib": ["ESNext"],
     "baseUrl": ".",
     "paths": {
-      "@shared/*": ["src/shared/*"]
+      "@shared/*": ["../shared/*"]
     }
   },
   "include": [
     "electron.vite.config.*",
-    "src/main/**/*",
-    "src/preload/**/*",
-    "src/shared/**/*"
+    "../backend/**/*",
+    "../preload/**/*",
+    "../shared/**/*"
   ]
 }

@@ -29,7 +29,7 @@ import {
 } from 'lucide-react'
 import { useEditorStore } from '../../store/useEditorStore'
 import { useDatabaseStore } from '../../store/useDatabaseStore'
-import { EditorSettings, ShellType } from '../../../../shared/types'
+import { EditorSettings, ShellType } from '@shared/types'
 import { THEMES, ACCENT_COLORS, getAccentsForTheme } from '../../theme/themeRegistry'
 import { FONT_THEMES } from '../../theme/fontRegistry'
 

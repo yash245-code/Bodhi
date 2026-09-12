@@ -160,9 +160,11 @@ const IGNORED_DIRECTORIES$1 = /* @__PURE__ */ new Set([
   ".DS_Store"
 ]);
 class FileService {
-  watcher = null;
-  mainWindow = null;
-  debounceTimers = /* @__PURE__ */ new Map();
+  constructor() {
+    this.watcher = null;
+    this.mainWindow = null;
+    this.debounceTimers = /* @__PURE__ */ new Map();
+  }
   setMainWindow(window) {
     this.mainWindow = window;
   }
@@ -399,9 +401,11 @@ class FileService {
 }
 const fileService = new FileService();
 class TerminalService {
-  terminals = /* @__PURE__ */ new Map();
-  pendingWrites = /* @__PURE__ */ new Map();
-  mainWindow = null;
+  constructor() {
+    this.terminals = /* @__PURE__ */ new Map();
+    this.pendingWrites = /* @__PURE__ */ new Map();
+    this.mainWindow = null;
+  }
   setMainWindow(window) {
     this.mainWindow = window;
   }
@@ -1777,7 +1781,6 @@ ${content}`;
 }
 const gitService = new GitService();
 class GitHubService {
-  tokenFilePath;
   constructor() {
     try {
       this.tokenFilePath = path__namespace.join(electron.app.getPath("userData"), "github_token.enc");
@@ -1980,10 +1983,9 @@ function generateCodeChallenge(verifier) {
   return base64UrlEncode(hash);
 }
 class AuthService {
-  userProfilePath;
-  currentUser = null;
-  activeServer = null;
   constructor() {
+    this.currentUser = null;
+    this.activeServer = null;
     try {
       this.userProfilePath = path__namespace.join(electron.app.getPath("userData"), "bodhi_user.enc");
     } catch {
@@ -2246,12 +2248,11 @@ class AuthService {
 }
 const authService = new AuthService();
 class PostgresService {
-  pool = null;
-  configPath;
-  status = {
-    connected: false
-  };
   constructor() {
+    this.pool = null;
+    this.status = {
+      connected: false
+    };
     try {
       this.configPath = path__namespace.join(electron.app.getPath("userData"), "postgres_config.enc");
     } catch {
@@ -2596,11 +2597,9 @@ function parseJsonc(content) {
   }
 }
 class ExtensionService {
-  extensionsDir;
-  dbPath;
-  installedExtensions = /* @__PURE__ */ new Map();
-  isInitialized = false;
   constructor() {
+    this.installedExtensions = /* @__PURE__ */ new Map();
+    this.isInitialized = false;
     this.extensionsDir = path__namespace.join(electron.app.getPath("userData"), "extensions");
     this.dbPath = path__namespace.join(this.extensionsDir, "extensions.json");
   }

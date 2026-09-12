@@ -17,7 +17,12 @@ const bodhiColors = {
 }
 
 export default {
-  content: ['./src/renderer/index.html', './src/renderer/src/**/*.{js,ts,jsx,tsx}'],
+  content: [
+    './frontend/index.html',
+    './frontend/src/**/*.{js,ts,jsx,tsx}',
+    '../frontend/index.html',
+    '../frontend/src/**/*.{js,ts,jsx,tsx}'
+  ],
   darkMode: 'class',
   theme: {
     extend: {

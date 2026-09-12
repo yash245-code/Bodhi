@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react'
 import { Minus, Square, X, Copy, Search, Settings, User } from 'lucide-react'
-import { useEditorStore } from '../store/useEditorStore'
-import { useWorkspaceStore } from '../store/useWorkspaceStore'
-import { useAuthStore } from '../store/useAuthStore'
-import { MenuBar } from './TitleBar/MenuBar'
-import { BodhiLogo } from './common/BodhiLogo'
-import { AccountModal } from './AccountModal/AccountModal'
+import { useEditorStore } from '../../store/useEditorStore'
+import { useWorkspaceStore } from '../../store/useWorkspaceStore'
+import { useAuthStore } from '../../store/useAuthStore'
+import { MenuBar } from './MenuBar'
+import { BodhiLogo } from '../common/BodhiLogo'
+import { AccountModal } from '../AccountModal/AccountModal'
 
 export const TitleBar: React.FC = () => {
   const [isMaximized, setIsMaximized] = useState(false)
@@ -140,4 +140,3 @@ export const TitleBar: React.FC = () => {
     </div>
   )
 }
-

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useCallback } from 'react'
-import { TitleBar } from './components/TitleBar'
+import { TitleBar } from './components/TitleBar/TitleBar'
 import { Sidebar } from './components/Sidebar/Sidebar'
 import { TabBar } from './components/Editor/TabBar'
 import { CodeEditor } from './components/Editor/CodeEditor'
