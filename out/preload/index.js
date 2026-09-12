@@ -50,6 +50,39 @@ const IPC_CHANNELS = {
   GIT_DISCARD: "BODHI:git:discard",
   GIT_COMMIT: "BODHI:git:commit",
   GIT_GET_FILE_CHURN: "BODHI:git:getFileChurn",
+  GIT_INIT: "BODHI:git:init",
+  GIT_CREATE_GITIGNORE: "BODHI:git:createGitignore",
+  GIT_GET_REMOTES: "BODHI:git:getRemotes",
+  GIT_ADD_REMOTE: "BODHI:git:addRemote",
+  GIT_REMOVE_REMOTE: "BODHI:git:removeRemote",
+  GIT_SET_REMOTE_URL: "BODHI:git:setRemoteUrl",
+  GIT_GET_BRANCHES: "BODHI:git:getBranches",
+  GIT_CHECKOUT_BRANCH: "BODHI:git:checkoutBranch",
+  GIT_CREATE_BRANCH: "BODHI:git:createBranch",
+  GIT_DELETE_BRANCH: "BODHI:git:deleteBranch",
+  GIT_MERGE_BRANCH: "BODHI:git:mergeBranch",
+  GIT_FETCH: "BODHI:git:fetch",
+  GIT_PULL: "BODHI:git:pull",
+  GIT_PUSH: "BODHI:git:push",
+  GIT_GET_SYNC_STATUS: "BODHI:git:getSyncStatus",
+  GIT_STASH_SAVE: "BODHI:git:stashSave",
+  GIT_STASH_POP: "BODHI:git:stashPop",
+  GIT_STASH_LIST: "BODHI:git:stashList",
+  GIT_STASH_DROP: "BODHI:git:stashDrop",
+  GIT_GET_COMMIT_LOG: "BODHI:git:getCommitLog",
+  GIT_UNDO_COMMIT: "BODHI:git:undoCommit",
+  // GitHub Integration & Cloud Publishing
+  GITHUB_VALIDATE_TOKEN: "BODHI:github:validateToken",
+  GITHUB_PUBLISH_REPO: "BODHI:github:publishRepo",
+  GITHUB_GET_USER_REPOS: "BODHI:github:getUserRepos",
+  GITHUB_GET_STORED_TOKEN: "BODHI:github:getStoredToken",
+  GITHUB_SET_STORED_TOKEN: "BODHI:github:setStoredToken",
+  GITHUB_CLEAR_STORED_TOKEN: "BODHI:github:clearStoredToken",
+  // User Authentication (Google OAuth & Profile)
+  AUTH_LOGIN_GOOGLE: "BODHI:auth:loginGoogle",
+  AUTH_LOGOUT: "BODHI:auth:logout",
+  AUTH_GET_CURRENT_USER: "BODHI:auth:getCurrentUser",
+  AUTH_STATE_CHANGED: "BODHI:auth:stateChanged",
   // Extensions
   EXTENSIONS_GET_INSTALLED: "BODHI:extensions:getInstalled",
   EXTENSIONS_SEARCH_MARKETPLACE: "BODHI:extensions:searchMarketplace",
@@ -67,7 +100,19 @@ const IPC_CHANNELS = {
   AI_GENERATE_COMPLETION: "BODHI:ai:generateCompletion",
   AI_GENERATE_EDIT: "BODHI:ai:generateEdit",
   AI_CHAT: "BODHI:ai:chat",
-  AI_TEST_CONNECTION: "BODHI:ai:testConnection"
+  AI_TEST_CONNECTION: "BODHI:ai:testConnection",
+  // PostgreSQL Database & Cloud Sync
+  DB_TEST_CONNECTION: "BODHI:db:testConnection",
+  DB_CONNECT: "BODHI:db:connect",
+  DB_DISCONNECT: "BODHI:db:disconnect",
+  DB_GET_STATUS: "BODHI:db:getStatus",
+  DB_SYNC_SETTINGS: "BODHI:db:syncSettings",
+  DB_GET_SETTINGS: "BODHI:db:getSettings",
+  DB_SAVE_SNIPPET: "BODHI:db:saveSnippet",
+  DB_GET_SNIPPETS: "BODHI:db:getSnippets",
+  DB_SAVE_AI_CHAT: "BODHI:db:saveAiChat",
+  DB_GET_AI_CHATS: "BODHI:db:getAiChats",
+  DB_STATUS_CHANGED: "BODHI:db:statusChanged"
 };
 const api = {
   // Window controls
@@ -182,6 +227,47 @@ const api = {
   gitDiscard: (workspacePath, relativePath, isUntracked) => electron.ipcRenderer.invoke(IPC_CHANNELS.GIT_DISCARD, workspacePath, relativePath, isUntracked),
   gitCommit: (workspacePath, message) => electron.ipcRenderer.invoke(IPC_CHANNELS.GIT_COMMIT, workspacePath, message),
   gitGetFileChurn: (workspacePath, relativePath) => electron.ipcRenderer.invoke(IPC_CHANNELS.GIT_GET_FILE_CHURN, workspacePath, relativePath),
+  gitInit: (workspacePath, defaultBranch) => electron.ipcRenderer.invoke(IPC_CHANNELS.GIT_INIT, workspacePath, defaultBranch),
+  gitCreateGitignore: (workspacePath, templateType) => electron.ipcRenderer.invoke(IPC_CHANNELS.GIT_CREATE_GITIGNORE, workspacePath, templateType),
+  gitGetRemotes: (workspacePath) => electron.ipcRenderer.invoke(IPC_CHANNELS.GIT_GET_REMOTES, workspacePath),
+  gitAddRemote: (workspacePath, name, url) => electron.ipcRenderer.invoke(IPC_CHANNELS.GIT_ADD_REMOTE, workspacePath, name, url),
+  gitRemoveRemote: (workspacePath, name) => electron.ipcRenderer.invoke(IPC_CHANNELS.GIT_REMOVE_REMOTE, workspacePath, name),
+  gitSetRemoteUrl: (workspacePath, name, url) => electron.ipcRenderer.invoke(IPC_CHANNELS.GIT_SET_REMOTE_URL, workspacePath, name, url),
+  gitGetBranches: (workspacePath) => electron.ipcRenderer.invoke(IPC_CHANNELS.GIT_GET_BRANCHES, workspacePath),
+  gitCheckoutBranch: (workspacePath, branchName, createNew) => electron.ipcRenderer.invoke(IPC_CHANNELS.GIT_CHECKOUT_BRANCH, workspacePath, branchName, createNew),
+  gitCreateBranch: (workspacePath, branchName) => electron.ipcRenderer.invoke(IPC_CHANNELS.GIT_CREATE_BRANCH, workspacePath, branchName),
+  gitDeleteBranch: (workspacePath, branchName, force) => electron.ipcRenderer.invoke(IPC_CHANNELS.GIT_DELETE_BRANCH, workspacePath, branchName, force),
+  gitMergeBranch: (workspacePath, branchName) => electron.ipcRenderer.invoke(IPC_CHANNELS.GIT_MERGE_BRANCH, workspacePath, branchName),
+  gitFetch: (workspacePath, remote) => electron.ipcRenderer.invoke(IPC_CHANNELS.GIT_FETCH, workspacePath, remote),
+  gitPull: (workspacePath, remote, branch) => electron.ipcRenderer.invoke(IPC_CHANNELS.GIT_PULL, workspacePath, remote, branch),
+  gitPush: (workspacePath, remote, branch, setUpstream) => electron.ipcRenderer.invoke(IPC_CHANNELS.GIT_PUSH, workspacePath, remote, branch, setUpstream),
+  gitGetSyncStatus: (workspacePath) => electron.ipcRenderer.invoke(IPC_CHANNELS.GIT_GET_SYNC_STATUS, workspacePath),
+  gitStashSave: (workspacePath, message) => electron.ipcRenderer.invoke(IPC_CHANNELS.GIT_STASH_SAVE, workspacePath, message),
+  gitStashPop: (workspacePath, index) => electron.ipcRenderer.invoke(IPC_CHANNELS.GIT_STASH_POP, workspacePath, index),
+  gitStashList: (workspacePath) => electron.ipcRenderer.invoke(IPC_CHANNELS.GIT_STASH_LIST, workspacePath),
+  gitStashDrop: (workspacePath, index) => electron.ipcRenderer.invoke(IPC_CHANNELS.GIT_STASH_DROP, workspacePath, index),
+  gitGetCommitLog: (workspacePath, maxCount) => electron.ipcRenderer.invoke(IPC_CHANNELS.GIT_GET_COMMIT_LOG, workspacePath, maxCount),
+  gitUndoCommit: (workspacePath) => electron.ipcRenderer.invoke(IPC_CHANNELS.GIT_UNDO_COMMIT, workspacePath),
+  // GitHub Integration
+  githubValidateToken: (token) => electron.ipcRenderer.invoke(IPC_CHANNELS.GITHUB_VALIDATE_TOKEN, token),
+  githubPublishRepo: (workspacePath, options, token) => electron.ipcRenderer.invoke(IPC_CHANNELS.GITHUB_PUBLISH_REPO, workspacePath, options, token),
+  githubGetUserRepos: (token) => electron.ipcRenderer.invoke(IPC_CHANNELS.GITHUB_GET_USER_REPOS, token),
+  githubGetStoredToken: () => electron.ipcRenderer.invoke(IPC_CHANNELS.GITHUB_GET_STORED_TOKEN),
+  githubSetStoredToken: (token) => electron.ipcRenderer.invoke(IPC_CHANNELS.GITHUB_SET_STORED_TOKEN, token),
+  githubClearStoredToken: () => electron.ipcRenderer.invoke(IPC_CHANNELS.GITHUB_CLEAR_STORED_TOKEN),
+  // User Authentication
+  authLoginGoogle: () => electron.ipcRenderer.invoke(IPC_CHANNELS.AUTH_LOGIN_GOOGLE),
+  authLogout: () => electron.ipcRenderer.invoke(IPC_CHANNELS.AUTH_LOGOUT),
+  authGetCurrentUser: () => electron.ipcRenderer.invoke(IPC_CHANNELS.AUTH_GET_CURRENT_USER),
+  onAuthStateChanged: (callback) => {
+    const subscription = (_event, user) => {
+      callback(user);
+    };
+    electron.ipcRenderer.on(IPC_CHANNELS.AUTH_STATE_CHANGED, subscription);
+    return () => {
+      electron.ipcRenderer.removeListener(IPC_CHANNELS.AUTH_STATE_CHANGED, subscription);
+    };
+  },
   // Extensions
   extensionsGetInstalled: () => electron.ipcRenderer.invoke(IPC_CHANNELS.EXTENSIONS_GET_INSTALLED),
   extensionsSearchMarketplace: (query, category) => electron.ipcRenderer.invoke(IPC_CHANNELS.EXTENSIONS_SEARCH_MARKETPLACE, query, category),
@@ -199,7 +285,27 @@ const api = {
   aiGenerateCompletion: (req) => electron.ipcRenderer.invoke(IPC_CHANNELS.AI_GENERATE_COMPLETION, req),
   aiGenerateEdit: (req) => electron.ipcRenderer.invoke(IPC_CHANNELS.AI_GENERATE_EDIT, req),
   aiChat: (req) => electron.ipcRenderer.invoke(IPC_CHANNELS.AI_CHAT, req),
-  aiTestConnection: (provider, apiKey) => electron.ipcRenderer.invoke(IPC_CHANNELS.AI_TEST_CONNECTION, provider, apiKey)
+  aiTestConnection: (provider, apiKey) => electron.ipcRenderer.invoke(IPC_CHANNELS.AI_TEST_CONNECTION, provider, apiKey),
+  // PostgreSQL Database & Cloud Sync
+  dbTestConnection: (connectionString) => electron.ipcRenderer.invoke(IPC_CHANNELS.DB_TEST_CONNECTION, connectionString),
+  dbConnect: (connectionString) => electron.ipcRenderer.invoke(IPC_CHANNELS.DB_CONNECT, connectionString),
+  dbDisconnect: () => electron.ipcRenderer.invoke(IPC_CHANNELS.DB_DISCONNECT),
+  dbGetStatus: () => electron.ipcRenderer.invoke(IPC_CHANNELS.DB_GET_STATUS),
+  dbSyncSettings: (userId, settings) => electron.ipcRenderer.invoke(IPC_CHANNELS.DB_SYNC_SETTINGS, userId, settings),
+  dbGetSettings: (userId) => electron.ipcRenderer.invoke(IPC_CHANNELS.DB_GET_SETTINGS, userId),
+  dbSaveSnippet: (userId, snippet) => electron.ipcRenderer.invoke(IPC_CHANNELS.DB_SAVE_SNIPPET, userId, snippet),
+  dbGetSnippets: (userId) => electron.ipcRenderer.invoke(IPC_CHANNELS.DB_GET_SNIPPETS, userId),
+  dbSaveAiChat: (userId, chat) => electron.ipcRenderer.invoke(IPC_CHANNELS.DB_SAVE_AI_CHAT, userId, chat),
+  dbGetAiChats: (userId) => electron.ipcRenderer.invoke(IPC_CHANNELS.DB_GET_AI_CHATS, userId),
+  onDbStatusChanged: (callback) => {
+    const subscription = (_event, status) => {
+      callback(status);
+    };
+    electron.ipcRenderer.on(IPC_CHANNELS.DB_STATUS_CHANGED, subscription);
+    return () => {
+      electron.ipcRenderer.removeListener(IPC_CHANNELS.DB_STATUS_CHANGED, subscription);
+    };
+  }
 };
 try {
   electron.contextBridge.exposeInMainWorld("bodhiAPI", api);

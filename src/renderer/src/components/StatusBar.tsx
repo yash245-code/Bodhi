@@ -1,15 +1,19 @@
-import React from 'react'
 import {
   GitBranch,
   Terminal,
   FileCode,
   CheckCircle2,
   Columns,
-  Flame
+  Flame,
+  ArrowDown,
+  ArrowUp,
+  RefreshCw,
+  Database
 } from 'lucide-react'
 import { useEditorStore } from '../store/useEditorStore'
 import { useWorkspaceStore } from '../store/useWorkspaceStore'
 import { useGitStore } from '../store/useGitStore'
+import { useDatabaseStore } from '../store/useDatabaseStore'
 
 export const StatusBar: React.FC = () => {
   const {
@@ -20,19 +24,27 @@ export const StatusBar: React.FC = () => {
     isTerminalOpen,
     toggleTerminal,
     toggleSidebar,
-    toggleSidebarView,
-    toggleChurnHeatmap
+    toggleChurnHeatmap,
+    openSettingsWindow
   } = useEditorStore()
 
+  const { status: dbStatus } = useDatabaseStore()
+
   const { rootPath } = useWorkspaceStore()
-  const { branch, isGitRepo, stagedFiles, unstagedFiles, untrackedFiles } = useGitStore()
+  const {
+    branch,
+    isGitRepo,
+    stagedFiles,
+    unstagedFiles,
+    untrackedFiles,
+    syncStatus,
+    isSyncing,
+    openBranchModal,
+    syncChanges
+  } = useGitStore()
   const activeTab = tabs.find((t) => t.id === activeTabId)
 
   const totalChanges = stagedFiles.length + unstagedFiles.length + untrackedFiles.length
-
-  const handleBranchClick = (): void => {
-    toggleSidebarView('git')
-  }
 
   return (
     <div className="h-6 w-full bg-bodhi-panel border-t border-BODHI-border flex items-center justify-between px-3 text-[11px] select-none text-bodhi-muted shrink-0 z-40">
@@ -47,19 +59,45 @@ export const StatusBar: React.FC = () => {
         </button>
 
         {isGitRepo && branch ? (
-          <button
-            onClick={handleBranchClick}
-            title={`Git Branch: ${branch} (${totalChanges} uncommitted changes) - Click to open Source Control`}
-            className="flex items-center gap-1.5 text-bodhi-accent font-medium hover:brightness-125 transition-all cursor-pointer"
-          >
-            <GitBranch size={12} />
-            <span>{branch}</span>
-            {totalChanges > 0 && (
-              <span className="px-1 py-0.2 rounded bg-bodhi-surface text-bodhi-accent font-mono text-[9px] border border-BODHI-border">
-                {totalChanges}*
-              </span>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={openBranchModal}
+              title={`Branch: ${branch} - Click to switch or create branch`}
+              className="flex items-center gap-1.5 text-bodhi-accent font-medium hover:brightness-125 transition-all cursor-pointer"
+            >
+              <GitBranch size={12} />
+              <span>{branch}</span>
+              {totalChanges > 0 && (
+                <span className="px-1 py-0.2 rounded bg-bodhi-surface text-bodhi-accent font-mono text-[9px] border border-BODHI-border">
+                  {totalChanges}*
+                </span>
+              )}
+            </button>
+
+            {/* Sync indicator */}
+            {syncStatus.hasRemote && (
+              <button
+                onClick={syncChanges}
+                disabled={isSyncing}
+                title={`Sync Changes: ${syncStatus.ahead} outgoing, ${syncStatus.behind} incoming`}
+                className="flex items-center gap-0.5 px-1 py-0.2 ml-1 rounded hover:bg-bodhi-surface text-bodhi-muted hover:text-white font-mono text-[10px] transition-colors"
+              >
+                <RefreshCw size={10} className={isSyncing ? 'animate-spin text-bodhi-accent' : ''} />
+                {syncStatus.behind > 0 && (
+                  <span className="text-emerald-400 flex items-center">
+                    <ArrowDown size={9} />
+                    {syncStatus.behind}
+                  </span>
+                )}
+                {syncStatus.ahead > 0 && (
+                  <span className="text-bodhi-accent flex items-center">
+                    <ArrowUp size={9} />
+                    {syncStatus.ahead}
+                  </span>
+                )}
+              </button>
             )}
-          </button>
+          </div>
         ) : (
           <div className="flex items-center gap-1 text-bodhi-muted">
             <GitBranch size={12} />
@@ -118,6 +156,21 @@ export const StatusBar: React.FC = () => {
             </div>
           </>
         )}
+
+        <button
+          onClick={openSettingsWindow}
+          className={`flex items-center gap-1 transition-colors cursor-pointer ${
+            dbStatus.connected ? 'text-emerald-400 font-medium' : 'text-bodhi-muted hover:text-white'
+          }`}
+          title={
+            dbStatus.connected
+              ? `PostgreSQL: Connected (${dbStatus.host}/${dbStatus.database} - ${dbStatus.latencyMs}ms)`
+              : 'PostgreSQL: Disconnected (Click to configure in Settings)'
+          }
+        >
+          <Database size={11} className={dbStatus.connected ? 'text-emerald-400' : ''} />
+          <span>{dbStatus.connected ? 'Postgres' : 'Postgres Off'}</span>
+        </button>
 
         <button
           onClick={toggleTerminal}

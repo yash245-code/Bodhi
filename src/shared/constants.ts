@@ -55,6 +55,41 @@ export const IPC_CHANNELS = {
   GIT_DISCARD: 'BODHI:git:discard',
   GIT_COMMIT: 'BODHI:git:commit',
   GIT_GET_FILE_CHURN: 'BODHI:git:getFileChurn',
+  GIT_INIT: 'BODHI:git:init',
+  GIT_CREATE_GITIGNORE: 'BODHI:git:createGitignore',
+  GIT_GET_REMOTES: 'BODHI:git:getRemotes',
+  GIT_ADD_REMOTE: 'BODHI:git:addRemote',
+  GIT_REMOVE_REMOTE: 'BODHI:git:removeRemote',
+  GIT_SET_REMOTE_URL: 'BODHI:git:setRemoteUrl',
+  GIT_GET_BRANCHES: 'BODHI:git:getBranches',
+  GIT_CHECKOUT_BRANCH: 'BODHI:git:checkoutBranch',
+  GIT_CREATE_BRANCH: 'BODHI:git:createBranch',
+  GIT_DELETE_BRANCH: 'BODHI:git:deleteBranch',
+  GIT_MERGE_BRANCH: 'BODHI:git:mergeBranch',
+  GIT_FETCH: 'BODHI:git:fetch',
+  GIT_PULL: 'BODHI:git:pull',
+  GIT_PUSH: 'BODHI:git:push',
+  GIT_GET_SYNC_STATUS: 'BODHI:git:getSyncStatus',
+  GIT_STASH_SAVE: 'BODHI:git:stashSave',
+  GIT_STASH_POP: 'BODHI:git:stashPop',
+  GIT_STASH_LIST: 'BODHI:git:stashList',
+  GIT_STASH_DROP: 'BODHI:git:stashDrop',
+  GIT_GET_COMMIT_LOG: 'BODHI:git:getCommitLog',
+  GIT_UNDO_COMMIT: 'BODHI:git:undoCommit',
+
+  // GitHub Integration & Cloud Publishing
+  GITHUB_VALIDATE_TOKEN: 'BODHI:github:validateToken',
+  GITHUB_PUBLISH_REPO: 'BODHI:github:publishRepo',
+  GITHUB_GET_USER_REPOS: 'BODHI:github:getUserRepos',
+  GITHUB_GET_STORED_TOKEN: 'BODHI:github:getStoredToken',
+  GITHUB_SET_STORED_TOKEN: 'BODHI:github:setStoredToken',
+  GITHUB_CLEAR_STORED_TOKEN: 'BODHI:github:clearStoredToken',
+
+  // User Authentication (Google OAuth & Profile)
+  AUTH_LOGIN_GOOGLE: 'BODHI:auth:loginGoogle',
+  AUTH_LOGOUT: 'BODHI:auth:logout',
+  AUTH_GET_CURRENT_USER: 'BODHI:auth:getCurrentUser',
+  AUTH_STATE_CHANGED: 'BODHI:auth:stateChanged',
 
   // Extensions
   EXTENSIONS_GET_INSTALLED: 'BODHI:extensions:getInstalled',
@@ -74,7 +109,20 @@ export const IPC_CHANNELS = {
   AI_GENERATE_COMPLETION: 'BODHI:ai:generateCompletion',
   AI_GENERATE_EDIT: 'BODHI:ai:generateEdit',
   AI_CHAT: 'BODHI:ai:chat',
-  AI_TEST_CONNECTION: 'BODHI:ai:testConnection'
+  AI_TEST_CONNECTION: 'BODHI:ai:testConnection',
+
+  // PostgreSQL Database & Cloud Sync
+  DB_TEST_CONNECTION: 'BODHI:db:testConnection',
+  DB_CONNECT: 'BODHI:db:connect',
+  DB_DISCONNECT: 'BODHI:db:disconnect',
+  DB_GET_STATUS: 'BODHI:db:getStatus',
+  DB_SYNC_SETTINGS: 'BODHI:db:syncSettings',
+  DB_GET_SETTINGS: 'BODHI:db:getSettings',
+  DB_SAVE_SNIPPET: 'BODHI:db:saveSnippet',
+  DB_GET_SNIPPETS: 'BODHI:db:getSnippets',
+  DB_SAVE_AI_CHAT: 'BODHI:db:saveAiChat',
+  DB_GET_AI_CHATS: 'BODHI:db:getAiChats',
+  DB_STATUS_CHANGED: 'BODHI:db:statusChanged'
 } as const
 
 export const EXTENSION_TO_LANGUAGE: Record<string, string> = {

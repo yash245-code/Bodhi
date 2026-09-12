@@ -181,6 +181,117 @@ export interface GitFileChurnResult {
   oldestModified: number
 }
 
+export interface GitRemote {
+  name: string
+  fetchUrl: string
+  pushUrl: string
+}
+
+export interface GitBranchInfo {
+  name: string
+  current: boolean
+  remote: boolean
+  upstream?: string
+  ahead?: number
+  behind?: number
+}
+
+export interface GitSyncStatus {
+  ahead: number
+  behind: number
+  hasRemote: boolean
+  upstream?: string | null
+}
+
+export interface GitStashItem {
+  index: number
+  message: string
+  date: string
+  hash: string
+}
+
+export interface GitCommitLogItem {
+  hash: string
+  shortHash: string
+  author: string
+  email: string
+  date: string
+  relativeTime: string
+  message: string
+}
+
+export interface GitHubUser {
+  login: string
+  name: string
+  avatarUrl: string
+  bio?: string
+  publicRepos: number
+  htmlUrl: string
+}
+
+export interface GitHubPublishOptions {
+  repoName: string
+  description?: string
+  isPrivate: boolean
+  org?: string
+}
+
+export interface GitHubPublishResult {
+  success: boolean
+  cloneUrl?: string
+  htmlUrl?: string
+  error?: string
+}
+
+export interface UserProfile {
+  id: string
+  name: string
+  email: string
+  picture: string
+  provider: 'google'
+  lastLogin: number
+}
+
+export interface AuthResult {
+  success: boolean
+  user?: UserProfile
+  error?: string
+}
+
+export interface DbConnectionStatus {
+  connected: boolean
+  host?: string
+  database?: string
+  serverVersion?: string
+  latencyMs?: number
+  lastSyncTime?: number
+  error?: string
+}
+
+export interface DbTestResult {
+  success: boolean
+  message: string
+  latencyMs?: number
+  serverVersion?: string
+}
+
+export interface CloudSnippet {
+  id?: string
+  title: string
+  prefix: string
+  language: string
+  code: string
+  createdAt?: number
+}
+
+export interface CloudAIChat {
+  id?: string
+  title: string
+  messages: Array<{ role: string; content: string }>
+  model?: string
+  updatedAt?: number
+}
+
 export interface BodhiAPI {
   // Window controls
   minimizeWindow: () => Promise<void>
@@ -256,6 +367,41 @@ export interface BodhiAPI {
   gitDiscard: (workspacePath: string, relativePath: string, isUntracked?: boolean) => Promise<boolean>
   gitCommit: (workspacePath: string, message: string) => Promise<boolean>
   gitGetFileChurn: (workspacePath: string, relativePath: string) => Promise<GitFileChurnResult | null>
+  gitInit: (workspacePath: string, defaultBranch?: string) => Promise<boolean>
+  gitCreateGitignore: (workspacePath: string, templateType: string) => Promise<boolean>
+  gitGetRemotes: (workspacePath: string) => Promise<GitRemote[]>
+  gitAddRemote: (workspacePath: string, name: string, url: string) => Promise<boolean>
+  gitRemoveRemote: (workspacePath: string, name: string) => Promise<boolean>
+  gitSetRemoteUrl: (workspacePath: string, name: string, url: string) => Promise<boolean>
+  gitGetBranches: (workspacePath: string) => Promise<GitBranchInfo[]>
+  gitCheckoutBranch: (workspacePath: string, branchName: string, createNew?: boolean) => Promise<boolean>
+  gitCreateBranch: (workspacePath: string, branchName: string) => Promise<boolean>
+  gitDeleteBranch: (workspacePath: string, branchName: string, force?: boolean) => Promise<boolean>
+  gitMergeBranch: (workspacePath: string, branchName: string) => Promise<{ success: boolean; message: string }>
+  gitFetch: (workspacePath: string, remote?: string) => Promise<boolean>
+  gitPull: (workspacePath: string, remote?: string, branch?: string) => Promise<{ success: boolean; message: string }>
+  gitPush: (workspacePath: string, remote?: string, branch?: string, setUpstream?: boolean) => Promise<{ success: boolean; message: string }>
+  gitGetSyncStatus: (workspacePath: string) => Promise<GitSyncStatus>
+  gitStashSave: (workspacePath: string, message?: string) => Promise<boolean>
+  gitStashPop: (workspacePath: string, index?: number) => Promise<boolean>
+  gitStashList: (workspacePath: string) => Promise<GitStashItem[]>
+  gitStashDrop: (workspacePath: string, index?: number) => Promise<boolean>
+  gitGetCommitLog: (workspacePath: string, maxCount?: number) => Promise<GitCommitLogItem[]>
+  gitUndoCommit: (workspacePath: string) => Promise<boolean>
+
+  // GitHub Integration
+  githubValidateToken: (token: string) => Promise<GitHubUser | null>
+  githubPublishRepo: (workspacePath: string, options: GitHubPublishOptions, token?: string) => Promise<GitHubPublishResult>
+  githubGetUserRepos: (token?: string) => Promise<Array<{ id: number; name: string; fullName: string; isPrivate: boolean; htmlUrl: string; cloneUrl: string; description: string | null }>>
+  githubGetStoredToken: () => Promise<string | null>
+  githubSetStoredToken: (token: string) => Promise<boolean>
+  githubClearStoredToken: () => Promise<boolean>
+
+  // User Authentication (Google OAuth & Profile)
+  authLoginGoogle: () => Promise<AuthResult>
+  authLogout: () => Promise<boolean>
+  authGetCurrentUser: () => Promise<UserProfile | null>
+  onAuthStateChanged: (callback: (user: UserProfile | null) => void) => () => void
 
   // Extensions
   extensionsGetInstalled: () => Promise<InstalledExtension[]>
@@ -285,6 +431,19 @@ export interface BodhiAPI {
   aiGenerateEdit: (req: AIEditRequest) => Promise<AIResponse>
   aiChat: (req: AIChatRequest) => Promise<AIResponse>
   aiTestConnection: (provider?: string, apiKey?: string) => Promise<AITestResult>
+
+  // PostgreSQL Database & Cloud Sync
+  dbTestConnection: (connectionString: string) => Promise<DbTestResult>
+  dbConnect: (connectionString: string) => Promise<DbConnectionStatus>
+  dbDisconnect: () => Promise<boolean>
+  dbGetStatus: () => Promise<DbConnectionStatus>
+  dbSyncSettings: (userId: string, settings: Partial<EditorSettings>) => Promise<boolean>
+  dbGetSettings: (userId: string) => Promise<Partial<EditorSettings> | null>
+  dbSaveSnippet: (userId: string, snippet: CloudSnippet) => Promise<boolean>
+  dbGetSnippets: (userId: string) => Promise<CloudSnippet[]>
+  dbSaveAiChat: (userId: string, chat: CloudAIChat) => Promise<boolean>
+  dbGetAiChats: (userId: string) => Promise<CloudAIChat[]>
+  onDbStatusChanged: (callback: (status: DbConnectionStatus) => void) => () => void
 }
 
 export interface AITestResult {

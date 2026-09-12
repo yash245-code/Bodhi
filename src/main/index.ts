@@ -4,6 +4,8 @@ import * as fs from 'fs'
 import { registerIpcHandlers } from './ipcHandlers'
 import { fileService } from './services/fileService'
 import { terminalService } from './services/terminalService'
+import { postgresService } from './services/postgresService'
+import { authService } from './services/authService'
 
 process.on('uncaughtException', (error) => {
   console.error('[Bodhi Main Process] Uncaught Exception:', error)
@@ -233,7 +235,9 @@ function createWindow(): void {
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  await authService.init().catch(() => {})
+  await postgresService.init().catch(() => {})
   createWindow()
 
   app.on('activate', function () {
@@ -252,4 +256,5 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   fileService.stopWatcher()
   terminalService.killAll()
+  postgresService.disconnect().catch(() => {})
 })

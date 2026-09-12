@@ -1,16 +1,23 @@
 import React, { useState, useEffect } from 'react'
-import { Minus, Square, X, Copy, Search, Settings } from 'lucide-react'
+import { Minus, Square, X, Copy, Search, Settings, User } from 'lucide-react'
 import { useEditorStore } from '../store/useEditorStore'
 import { useWorkspaceStore } from '../store/useWorkspaceStore'
+import { useAuthStore } from '../store/useAuthStore'
 import { MenuBar } from './TitleBar/MenuBar'
 import { BodhiLogo } from './common/BodhiLogo'
+import { AccountModal } from './AccountModal/AccountModal'
 
 export const TitleBar: React.FC = () => {
   const [isMaximized, setIsMaximized] = useState(false)
   const { tabs, activeTabId, openPalette, openSettingsWindow } = useEditorStore()
   const { rootPath } = useWorkspaceStore()
+  const { user, openAuthModal, checkAuthStatus } = useAuthStore()
 
   const activeTab = tabs.find((t) => t.id === activeTabId)
+
+  useEffect(() => {
+    checkAuthStatus()
+  }, [checkAuthStatus])
 
   useEffect(() => {
     const checkMaximized = async (): Promise<void> => {
@@ -85,6 +92,21 @@ export const TitleBar: React.FC = () => {
       {/* Right section: Window Controls */}
       <div className="flex items-center non-draggable z-10">
         <button
+          onClick={openAuthModal}
+          className="h-11 w-11 flex items-center justify-center text-bodhi-muted hover:text-white hover:bg-bodhi-surface transition-colors"
+          title={user ? `Account: ${user.name} (${user.email})` : 'Sign in with Google'}
+        >
+          {user?.picture ? (
+            <img
+              src={user.picture}
+              alt={user.name}
+              className="w-5 h-5 rounded-full border border-bodhi-accent/60"
+            />
+          ) : (
+            <User size={14} className={user ? 'text-bodhi-accent' : ''} />
+          )}
+        </button>
+        <button
           onClick={openSettingsWindow}
           className="h-11 w-11 flex items-center justify-center text-bodhi-muted hover:text-white hover:bg-bodhi-surface transition-colors"
           title="Settings (Ctrl+,)"
@@ -113,6 +135,8 @@ export const TitleBar: React.FC = () => {
           <X size={14} />
         </button>
       </div>
+
+      <AccountModal />
     </div>
   )
 }

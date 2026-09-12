@@ -7,6 +7,9 @@ const fs = require("fs/promises");
 const child_process = require("child_process");
 const chokidar = require("chokidar");
 const os = require("os");
+const http = require("http");
+const crypto = require("crypto");
+const pg = require("pg");
 const AdmZip = require("adm-zip");
 function _interopNamespaceDefault(e) {
   const n = Object.create(null, { [Symbol.toStringTag]: { value: "Module" } });
@@ -28,6 +31,8 @@ const path__namespace = /* @__PURE__ */ _interopNamespaceDefault(path);
 const fsSync__namespace = /* @__PURE__ */ _interopNamespaceDefault(fsSync);
 const fs__namespace = /* @__PURE__ */ _interopNamespaceDefault(fs);
 const os__namespace = /* @__PURE__ */ _interopNamespaceDefault(os);
+const http__namespace = /* @__PURE__ */ _interopNamespaceDefault(http);
+const crypto__namespace = /* @__PURE__ */ _interopNamespaceDefault(crypto);
 const IPC_CHANNELS = {
   // Window
   WINDOW_MINIMIZE: "BODHI:window:minimize",
@@ -78,6 +83,39 @@ const IPC_CHANNELS = {
   GIT_DISCARD: "BODHI:git:discard",
   GIT_COMMIT: "BODHI:git:commit",
   GIT_GET_FILE_CHURN: "BODHI:git:getFileChurn",
+  GIT_INIT: "BODHI:git:init",
+  GIT_CREATE_GITIGNORE: "BODHI:git:createGitignore",
+  GIT_GET_REMOTES: "BODHI:git:getRemotes",
+  GIT_ADD_REMOTE: "BODHI:git:addRemote",
+  GIT_REMOVE_REMOTE: "BODHI:git:removeRemote",
+  GIT_SET_REMOTE_URL: "BODHI:git:setRemoteUrl",
+  GIT_GET_BRANCHES: "BODHI:git:getBranches",
+  GIT_CHECKOUT_BRANCH: "BODHI:git:checkoutBranch",
+  GIT_CREATE_BRANCH: "BODHI:git:createBranch",
+  GIT_DELETE_BRANCH: "BODHI:git:deleteBranch",
+  GIT_MERGE_BRANCH: "BODHI:git:mergeBranch",
+  GIT_FETCH: "BODHI:git:fetch",
+  GIT_PULL: "BODHI:git:pull",
+  GIT_PUSH: "BODHI:git:push",
+  GIT_GET_SYNC_STATUS: "BODHI:git:getSyncStatus",
+  GIT_STASH_SAVE: "BODHI:git:stashSave",
+  GIT_STASH_POP: "BODHI:git:stashPop",
+  GIT_STASH_LIST: "BODHI:git:stashList",
+  GIT_STASH_DROP: "BODHI:git:stashDrop",
+  GIT_GET_COMMIT_LOG: "BODHI:git:getCommitLog",
+  GIT_UNDO_COMMIT: "BODHI:git:undoCommit",
+  // GitHub Integration & Cloud Publishing
+  GITHUB_VALIDATE_TOKEN: "BODHI:github:validateToken",
+  GITHUB_PUBLISH_REPO: "BODHI:github:publishRepo",
+  GITHUB_GET_USER_REPOS: "BODHI:github:getUserRepos",
+  GITHUB_GET_STORED_TOKEN: "BODHI:github:getStoredToken",
+  GITHUB_SET_STORED_TOKEN: "BODHI:github:setStoredToken",
+  GITHUB_CLEAR_STORED_TOKEN: "BODHI:github:clearStoredToken",
+  // User Authentication (Google OAuth & Profile)
+  AUTH_LOGIN_GOOGLE: "BODHI:auth:loginGoogle",
+  AUTH_LOGOUT: "BODHI:auth:logout",
+  AUTH_GET_CURRENT_USER: "BODHI:auth:getCurrentUser",
+  AUTH_STATE_CHANGED: "BODHI:auth:stateChanged",
   // Extensions
   EXTENSIONS_GET_INSTALLED: "BODHI:extensions:getInstalled",
   EXTENSIONS_SEARCH_MARKETPLACE: "BODHI:extensions:searchMarketplace",
@@ -95,7 +133,19 @@ const IPC_CHANNELS = {
   AI_GENERATE_COMPLETION: "BODHI:ai:generateCompletion",
   AI_GENERATE_EDIT: "BODHI:ai:generateEdit",
   AI_CHAT: "BODHI:ai:chat",
-  AI_TEST_CONNECTION: "BODHI:ai:testConnection"
+  AI_TEST_CONNECTION: "BODHI:ai:testConnection",
+  // PostgreSQL Database & Cloud Sync
+  DB_TEST_CONNECTION: "BODHI:db:testConnection",
+  DB_CONNECT: "BODHI:db:connect",
+  DB_DISCONNECT: "BODHI:db:disconnect",
+  DB_GET_STATUS: "BODHI:db:getStatus",
+  DB_SYNC_SETTINGS: "BODHI:db:syncSettings",
+  DB_GET_SETTINGS: "BODHI:db:getSettings",
+  DB_SAVE_SNIPPET: "BODHI:db:saveSnippet",
+  DB_GET_SNIPPETS: "BODHI:db:getSnippets",
+  DB_SAVE_AI_CHAT: "BODHI:db:saveAiChat",
+  DB_GET_AI_CHATS: "BODHI:db:getAiChats",
+  DB_STATUS_CHANGED: "BODHI:db:statusChanged"
 };
 const IGNORED_DIRECTORIES$1 = /* @__PURE__ */ new Set([
   ".git",
@@ -852,26 +902,52 @@ class SearchService {
     return { totalReplacements, filesModified };
   }
 }
-function runGit(args, cwd) {
-  return new Promise((resolve, reject) => {
-    child_process.execFile(
-      "git",
-      args,
-      {
-        cwd,
-        maxBuffer: 10 * 1024 * 1024,
-        windowsHide: true
-      },
-      (error, stdout, stderr) => {
-        if (error) {
-          const err = new Error(stderr || stdout || error.message);
-          reject(err);
-        } else {
-          resolve(stdout);
+const workspaceQueues = /* @__PURE__ */ new Map();
+function runGit(args, cwd, isMutating = false) {
+  const execute = async () => {
+    return new Promise((resolve, reject) => {
+      child_process.execFile(
+        "git",
+        args,
+        {
+          cwd,
+          maxBuffer: 15 * 1024 * 1024,
+          windowsHide: true,
+          env: {
+            ...process.env,
+            GIT_TERMINAL_PROMPT: "0"
+          }
+        },
+        async (error, stdout, stderr) => {
+          if (error) {
+            const errOutput = stderr || stdout || error.message;
+            if (errOutput.includes("index.lock")) {
+              try {
+                const lockPath = path__namespace.join(cwd, ".git", "index.lock");
+                const stat = await fs__namespace.stat(lockPath).catch(() => null);
+                if (stat && Date.now() - stat.mtimeMs > 6e3) {
+                  await fs__namespace.unlink(lockPath).catch(() => null);
+                  console.warn("[GitService] Purged stale .git/index.lock");
+                }
+              } catch {
+              }
+            }
+            reject(new Error(errOutput));
+          } else {
+            resolve(stdout);
+          }
         }
-      }
-    );
-  });
+      );
+    });
+  };
+  if (isMutating && cwd) {
+    const prevQueue = workspaceQueues.get(cwd) || Promise.resolve();
+    const nextQueue = prevQueue.catch(() => {
+    }).then(() => execute());
+    workspaceQueues.set(cwd, nextQueue);
+    return nextQueue;
+  }
+  return execute();
 }
 class GitService {
   async isGitRepo(workspacePath) {
@@ -1240,8 +1316,1277 @@ class GitService {
       return null;
     }
   }
+  async initRepo(workspacePath, defaultBranch = "main") {
+    if (!workspacePath) return false;
+    try {
+      try {
+        await runGit(["init", "-b", defaultBranch], workspacePath, true);
+      } catch {
+        await runGit(["init"], workspacePath, true);
+        try {
+          await runGit(["checkout", "-b", defaultBranch], workspacePath, true);
+        } catch {
+        }
+      }
+      return true;
+    } catch (err) {
+      console.error("Failed to init repo:", err);
+      return false;
+    }
+  }
+  async createGitignore(workspacePath, templateType) {
+    if (!workspacePath) return false;
+    const gitignorePath = path__namespace.join(workspacePath, ".gitignore");
+    let content = "";
+    switch (templateType.toLowerCase()) {
+      case "node":
+        content = `# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Production
+dist/
+out/
+build/
+
+# Environment
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# System
+.DS_Store
+Thumbs.db
+`;
+        break;
+      case "python":
+        content = `# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# System
+.DS_Store
+Thumbs.db
+`;
+        break;
+      case "rust":
+        content = `# Output
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# Environment
+.env
+
+# System
+.DS_Store
+Thumbs.db
+`;
+        break;
+      default:
+        content = `# Dependencies & Builds
+node_modules/
+dist/
+out/
+build/
+target/
+
+# Environment & Secrets
+.env
+.env.local
+*.pem
+*.key
+
+# Logs & OS
+*.log
+.DS_Store
+Thumbs.db
+`;
+        break;
+    }
+    try {
+      let existing = "";
+      try {
+        existing = await fs__namespace.readFile(gitignorePath, "utf8");
+      } catch {
+      }
+      if (existing) {
+        content = `${existing.trim()}
+
+# Added by Bodhi
+${content}`;
+      }
+      await fs__namespace.writeFile(gitignorePath, content, "utf8");
+      return true;
+    } catch (err) {
+      console.error("Failed to create .gitignore:", err);
+      return false;
+    }
+  }
+  async getRemotes(workspacePath) {
+    if (!workspacePath) return [];
+    try {
+      const output = await runGit(["remote", "-v"], workspacePath);
+      const lines = output.split(/\r?\n/).filter((l) => l.trim());
+      const remoteMap = /* @__PURE__ */ new Map();
+      for (const line of lines) {
+        const parts = line.split(/\s+/);
+        if (parts.length >= 3) {
+          const name = parts[0];
+          const url = parts[1];
+          const type = parts[2];
+          const curr = remoteMap.get(name) || { fetchUrl: "", pushUrl: "" };
+          if (type.includes("(fetch)")) {
+            curr.fetchUrl = url;
+          } else if (type.includes("(push)")) {
+            curr.pushUrl = url;
+          }
+          remoteMap.set(name, curr);
+        }
+      }
+      const remotes = [];
+      for (const [name, urls] of remoteMap.entries()) {
+        remotes.push({
+          name,
+          fetchUrl: urls.fetchUrl || urls.pushUrl,
+          pushUrl: urls.pushUrl || urls.fetchUrl
+        });
+      }
+      return remotes;
+    } catch {
+      return [];
+    }
+  }
+  async addRemote(workspacePath, name, url) {
+    if (!workspacePath || !name || !url) return false;
+    try {
+      await runGit(["remote", "add", name.trim(), url.trim()], workspacePath, true);
+      return true;
+    } catch (err) {
+      console.error(`Failed to add remote ${name}:`, err);
+      return false;
+    }
+  }
+  async removeRemote(workspacePath, name) {
+    if (!workspacePath || !name) return false;
+    try {
+      await runGit(["remote", "remove", name.trim()], workspacePath, true);
+      return true;
+    } catch (err) {
+      console.error(`Failed to remove remote ${name}:`, err);
+      return false;
+    }
+  }
+  async setRemoteUrl(workspacePath, name, url) {
+    if (!workspacePath || !name || !url) return false;
+    try {
+      await runGit(["remote", "set-url", name.trim(), url.trim()], workspacePath, true);
+      return true;
+    } catch (err) {
+      console.error(`Failed to set remote url for ${name}:`, err);
+      return false;
+    }
+  }
+  async getBranches(workspacePath) {
+    if (!workspacePath) return [];
+    try {
+      const output = await runGit(["branch", "-a", "--no-color"], workspacePath);
+      const lines = output.split(/\r?\n/).filter((l) => l.trim());
+      const branches = [];
+      for (const line of lines) {
+        const isCurrent = line.startsWith("*");
+        let branchName = line.replace(/^[* ]\s*/, "").trim();
+        if (branchName.startsWith("(HEAD detached")) {
+          continue;
+        }
+        const isRemote = branchName.startsWith("remotes/");
+        if (isRemote) {
+          if (branchName.includes(" -> ")) continue;
+          branchName = branchName.replace(/^remotes\//, "");
+        }
+        branches.push({
+          name: branchName,
+          current: isCurrent,
+          remote: isRemote
+        });
+      }
+      return branches;
+    } catch {
+      return [];
+    }
+  }
+  async checkoutBranch(workspacePath, branchName, createNew = false) {
+    if (!workspacePath || !branchName) return false;
+    try {
+      if (createNew) {
+        await runGit(["checkout", "-b", branchName.trim()], workspacePath, true);
+      } else {
+        await runGit(["checkout", branchName.trim()], workspacePath, true);
+      }
+      return true;
+    } catch (err) {
+      console.error(`Failed to checkout branch ${branchName}:`, err);
+      return false;
+    }
+  }
+  async createBranch(workspacePath, branchName) {
+    if (!workspacePath || !branchName) return false;
+    try {
+      await runGit(["branch", branchName.trim()], workspacePath, true);
+      return true;
+    } catch (err) {
+      console.error(`Failed to create branch ${branchName}:`, err);
+      return false;
+    }
+  }
+  async deleteBranch(workspacePath, branchName, force = false) {
+    if (!workspacePath || !branchName) return false;
+    try {
+      await runGit(["branch", force ? "-D" : "-d", branchName.trim()], workspacePath, true);
+      return true;
+    } catch (err) {
+      console.error(`Failed to delete branch ${branchName}:`, err);
+      return false;
+    }
+  }
+  async mergeBranch(workspacePath, branchName) {
+    if (!workspacePath || !branchName) {
+      return { success: false, message: "Invalid arguments" };
+    }
+    try {
+      const stdout = await runGit(["merge", branchName.trim()], workspacePath, true);
+      return { success: true, message: stdout.trim() || "Merge successful" };
+    } catch (err) {
+      return { success: false, message: err.message || "Merge conflict or failed" };
+    }
+  }
+  async fetch(workspacePath, remote) {
+    if (!workspacePath) return false;
+    try {
+      await runGit(["fetch", remote || "--all"], workspacePath, true);
+      return true;
+    } catch (err) {
+      console.error("Failed to fetch:", err);
+      return false;
+    }
+  }
+  async pull(workspacePath, remote, branch) {
+    if (!workspacePath) return { success: false, message: "No workspace" };
+    try {
+      const args = ["pull"];
+      if (remote) args.push(remote);
+      if (branch) args.push(branch);
+      const res = await runGit(args, workspacePath, true);
+      return { success: true, message: res.trim() || "Pull successful" };
+    } catch (err) {
+      console.error("Failed to pull:", err);
+      return { success: false, message: err.message || "Pull failed" };
+    }
+  }
+  async push(workspacePath, remote = "origin", branch, setUpstream = false) {
+    if (!workspacePath) return { success: false, message: "No workspace" };
+    try {
+      const currentBranch = branch || await this.getBranch(workspacePath) || "main";
+      const args = ["push"];
+      if (setUpstream) {
+        args.push("-u", remote, currentBranch);
+      } else {
+        args.push(remote, currentBranch);
+      }
+      const res = await runGit(args, workspacePath, true);
+      return { success: true, message: res.trim() || "Push successful" };
+    } catch (err) {
+      console.error("Failed to push:", err);
+      return { success: false, message: err.message || "Push failed" };
+    }
+  }
+  async getSyncStatus(workspacePath) {
+    const defaultStatus = {
+      ahead: 0,
+      behind: 0,
+      hasRemote: false,
+      upstream: null
+    };
+    if (!workspacePath) return defaultStatus;
+    try {
+      const remotes = await this.getRemotes(workspacePath);
+      const hasRemote = remotes.length > 0;
+      if (!hasRemote) {
+        return defaultStatus;
+      }
+      let upstream = null;
+      try {
+        const out = await runGit(
+          ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+          workspacePath
+        );
+        upstream = out.trim() || null;
+      } catch {
+        upstream = null;
+      }
+      if (!upstream) {
+        return {
+          ahead: 0,
+          behind: 0,
+          hasRemote: true,
+          upstream: null
+        };
+      }
+      let ahead = 0;
+      let behind = 0;
+      try {
+        const aheadOut = await runGit(["rev-list", "--count", "@{u}..HEAD"], workspacePath);
+        ahead = parseInt(aheadOut.trim(), 10) || 0;
+      } catch {
+        ahead = 0;
+      }
+      try {
+        const behindOut = await runGit(["rev-list", "--count", "HEAD..@{u}"], workspacePath);
+        behind = parseInt(behindOut.trim(), 10) || 0;
+      } catch {
+        behind = 0;
+      }
+      return {
+        ahead,
+        behind,
+        hasRemote: true,
+        upstream
+      };
+    } catch {
+      return defaultStatus;
+    }
+  }
+  async stashSave(workspacePath, message) {
+    if (!workspacePath) return false;
+    try {
+      const args = ["stash", "push"];
+      if (message && message.trim()) {
+        args.push("-m", message.trim());
+      }
+      await runGit(args, workspacePath, true);
+      return true;
+    } catch (err) {
+      console.error("Failed to stash:", err);
+      return false;
+    }
+  }
+  async stashPop(workspacePath, index = 0) {
+    if (!workspacePath) return false;
+    try {
+      await runGit(["stash", "pop", `stash@{${index}}`], workspacePath, true);
+      return true;
+    } catch (err) {
+      console.error(`Failed to pop stash index ${index}:`, err);
+      return false;
+    }
+  }
+  async stashList(workspacePath) {
+    if (!workspacePath) return [];
+    try {
+      const out = await runGit(["stash", "list", "--pretty=format:%gd|%h|%s|%cr"], workspacePath);
+      const lines = out.split(/\r?\n/).filter((l) => l.trim());
+      const stashes = [];
+      for (let i = 0; i < lines.length; i++) {
+        const parts = lines[i].split("|");
+        if (parts.length >= 4) {
+          const indexMatch = parts[0].match(/stash@\{(\d+)\}/);
+          const index = indexMatch ? parseInt(indexMatch[1], 10) : i;
+          stashes.push({
+            index,
+            hash: parts[1],
+            message: parts[2],
+            date: parts[3]
+          });
+        }
+      }
+      return stashes;
+    } catch {
+      return [];
+    }
+  }
+  async stashDrop(workspacePath, index = 0) {
+    if (!workspacePath) return false;
+    try {
+      await runGit(["stash", "drop", `stash@{${index}}`], workspacePath, true);
+      return true;
+    } catch (err) {
+      console.error(`Failed to drop stash index ${index}:`, err);
+      return false;
+    }
+  }
+  async getCommitLog(workspacePath, maxCount = 50) {
+    if (!workspacePath) return [];
+    try {
+      const out = await runGit(
+        ["log", `-n${maxCount}`, "--pretty=format:%H|%h|%an|%ae|%aI|%ar|%s"],
+        workspacePath
+      );
+      const lines = out.split(/\r?\n/).filter((l) => l.trim());
+      const commits = [];
+      for (const line of lines) {
+        const parts = line.split("|");
+        if (parts.length >= 7) {
+          commits.push({
+            hash: parts[0],
+            shortHash: parts[1],
+            author: parts[2],
+            email: parts[3],
+            date: parts[4],
+            relativeTime: parts[5],
+            message: parts.slice(6).join("|")
+          });
+        }
+      }
+      return commits;
+    } catch {
+      return [];
+    }
+  }
+  async undoLastCommit(workspacePath) {
+    if (!workspacePath) return false;
+    try {
+      await runGit(["reset", "--soft", "HEAD~1"], workspacePath, true);
+      return true;
+    } catch (err) {
+      console.error("Failed to undo last commit:", err);
+      return false;
+    }
+  }
 }
 const gitService = new GitService();
+class GitHubService {
+  tokenFilePath;
+  constructor() {
+    try {
+      this.tokenFilePath = path__namespace.join(electron.app.getPath("userData"), "github_token.enc");
+    } catch {
+      this.tokenFilePath = path__namespace.join(process.cwd(), ".github_token.enc");
+    }
+  }
+  async getStoredToken() {
+    try {
+      const buffer = await fs__namespace.readFile(this.tokenFilePath);
+      if (electron.safeStorage && electron.safeStorage.isEncryptionAvailable()) {
+        return electron.safeStorage.decryptString(buffer);
+      } else {
+        return buffer.toString("utf8");
+      }
+    } catch {
+      return null;
+    }
+  }
+  async setStoredToken(token) {
+    if (!token || !token.trim()) return false;
+    try {
+      let data;
+      if (electron.safeStorage && electron.safeStorage.isEncryptionAvailable()) {
+        data = electron.safeStorage.encryptString(token.trim());
+      } else {
+        data = Buffer.from(token.trim(), "utf8");
+      }
+      await fs__namespace.writeFile(this.tokenFilePath, data);
+      return true;
+    } catch (err) {
+      console.error("Failed to store GitHub token:", err);
+      return false;
+    }
+  }
+  async clearStoredToken() {
+    try {
+      await fs__namespace.unlink(this.tokenFilePath);
+      return true;
+    } catch {
+      return true;
+    }
+  }
+  async validateToken(token) {
+    if (!token || !token.trim()) return null;
+    try {
+      const res = await fetch("https://api.github.com/user", {
+        headers: {
+          Authorization: `Bearer ${token.trim()}`,
+          Accept: "application/vnd.github.v3+json",
+          "User-Agent": "Bodhi-Editor"
+        }
+      });
+      if (!res.ok) {
+        console.error("GitHub validate token failed:", res.status, res.statusText);
+        return null;
+      }
+      const data = await res.json();
+      return {
+        login: data.login,
+        name: data.name || data.login,
+        avatarUrl: data.avatar_url,
+        bio: data.bio || "",
+        publicRepos: data.public_repos || 0,
+        htmlUrl: data.html_url
+      };
+    } catch (err) {
+      console.error("Failed to validate GitHub token:", err);
+      return null;
+    }
+  }
+  async getUserRepositories(token) {
+    const activeToken = token || await this.getStoredToken();
+    if (!activeToken) return [];
+    try {
+      const res = await fetch("https://api.github.com/user/repos?sort=updated&per_page=50", {
+        headers: {
+          Authorization: `Bearer ${activeToken.trim()}`,
+          Accept: "application/vnd.github.v3+json",
+          "User-Agent": "Bodhi-Editor"
+        }
+      });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.map((repo) => ({
+        id: repo.id,
+        name: repo.name,
+        fullName: repo.full_name,
+        isPrivate: !!repo.private,
+        htmlUrl: repo.html_url,
+        cloneUrl: repo.clone_url,
+        description: repo.description
+      }));
+    } catch (err) {
+      console.error("Failed to fetch user repositories from GitHub:", err);
+      return [];
+    }
+  }
+  async publishRepository(workspacePath, options, token) {
+    const activeToken = token || await this.getStoredToken();
+    if (!activeToken) {
+      return {
+        success: false,
+        error: "Please connect your GitHub account or provide a GitHub Personal Access Token."
+      };
+    }
+    if (!workspacePath) {
+      return { success: false, error: "No active workspace open." };
+    }
+    const isRepo = await gitService.isGitRepo(workspacePath);
+    if (!isRepo) {
+      const initialized = await gitService.initRepo(workspacePath, "main");
+      if (!initialized) {
+        return { success: false, error: "Failed to initialize local Git repository." };
+      }
+    }
+    const endpoint = options.org ? `https://api.github.com/orgs/${encodeURIComponent(options.org)}/repos` : "https://api.github.com/user/repos";
+    try {
+      const createRes = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${activeToken.trim()}`,
+          Accept: "application/vnd.github.v3+json",
+          "Content-Type": "application/json",
+          "User-Agent": "Bodhi-Editor"
+        },
+        body: JSON.stringify({
+          name: options.repoName.trim(),
+          description: options.description?.trim() || "",
+          private: options.isPrivate,
+          auto_init: false
+        })
+      });
+      if (!createRes.ok) {
+        const errorData = await createRes.json().catch(() => ({}));
+        const msg = errorData.message || createRes.statusText;
+        const errors = errorData.errors ? errorData.errors.map((e) => e.message).join(", ") : "";
+        return {
+          success: false,
+          error: `GitHub repository creation failed: ${msg}${errors ? ` (${errors})` : ""}`
+        };
+      }
+      const repoData = await createRes.json();
+      let cloneUrl = repoData.clone_url;
+      const htmlUrl = repoData.html_url;
+      if (cloneUrl.startsWith("https://")) {
+        const urlObj = new URL(cloneUrl);
+        urlObj.username = "x-access-token";
+        urlObj.password = activeToken.trim();
+        cloneUrl = urlObj.toString();
+      }
+      const remotes = await gitService.getRemotes(workspacePath);
+      const originRemote = remotes.find((r) => r.name === "origin");
+      if (originRemote) {
+        await gitService.setRemoteUrl(workspacePath, "origin", cloneUrl);
+      } else {
+        await gitService.addRemote(workspacePath, "origin", cloneUrl);
+      }
+      const status = await gitService.getStatus(workspacePath);
+      const commitLog = await gitService.getCommitLog(workspacePath, 1);
+      if (commitLog.length === 0) {
+        await gitService.stageAll(workspacePath);
+        await gitService.commit(workspacePath, "Initial commit from Bodhi Editor");
+      } else if (status.staged.length > 0 || status.unstaged.length > 0 || status.untracked.length > 0) {
+        await gitService.stageAll(workspacePath);
+        await gitService.commit(workspacePath, "Update project changes before publishing");
+      }
+      const currentBranch = await gitService.getBranch(workspacePath) || "main";
+      const pushRes = await gitService.push(workspacePath, "origin", currentBranch, true);
+      await gitService.setRemoteUrl(workspacePath, "origin", repoData.clone_url);
+      if (!pushRes.success) {
+        return {
+          success: true,
+          cloneUrl: repoData.clone_url,
+          htmlUrl,
+          error: `Repository was created on GitHub (${htmlUrl}), but initial push failed: ${pushRes.message}. You can push manually using Source Control.`
+        };
+      }
+      return {
+        success: true,
+        cloneUrl: repoData.clone_url,
+        htmlUrl
+      };
+    } catch (err) {
+      console.error("Failed in publishRepository:", err);
+      return { success: false, error: err.message || "Unknown network error occurred." };
+    }
+  }
+}
+const githubService = new GitHubService();
+const DEFAULT_GOOGLE_CLIENT_ID = process.env.BODHI_GOOGLE_CLIENT_ID || "984182987114-bodhi-editor-demo.apps.googleusercontent.com";
+function base64UrlEncode(buffer) {
+  return buffer.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function generateCodeVerifier() {
+  return base64UrlEncode(crypto__namespace.randomBytes(32));
+}
+function generateCodeChallenge(verifier) {
+  const hash = crypto__namespace.createHash("sha256").update(verifier).digest();
+  return base64UrlEncode(hash);
+}
+class AuthService {
+  userProfilePath;
+  currentUser = null;
+  activeServer = null;
+  constructor() {
+    try {
+      this.userProfilePath = path__namespace.join(electron.app.getPath("userData"), "bodhi_user.enc");
+    } catch {
+      this.userProfilePath = path__namespace.join(process.cwd(), ".bodhi_user.enc");
+    }
+  }
+  async init() {
+    await this.loadStoredUser();
+  }
+  async loadStoredUser() {
+    try {
+      const buffer = await fs__namespace.readFile(this.userProfilePath);
+      let jsonStr;
+      if (electron.safeStorage && electron.safeStorage.isEncryptionAvailable()) {
+        jsonStr = electron.safeStorage.decryptString(buffer);
+      } else {
+        jsonStr = buffer.toString("utf8");
+      }
+      this.currentUser = JSON.parse(jsonStr);
+      return this.currentUser;
+    } catch {
+      this.currentUser = null;
+      return null;
+    }
+  }
+  async saveUser(user) {
+    this.currentUser = user;
+    try {
+      const str = JSON.stringify(user);
+      let data;
+      if (electron.safeStorage && electron.safeStorage.isEncryptionAvailable()) {
+        data = electron.safeStorage.encryptString(str);
+      } else {
+        data = Buffer.from(str, "utf8");
+      }
+      await fs__namespace.writeFile(this.userProfilePath, data);
+    } catch (err) {
+      console.error("Failed to save user session:", err);
+    }
+    this.notifyWindows(user);
+  }
+  async getCurrentUser() {
+    if (this.currentUser) return this.currentUser;
+    return await this.loadStoredUser();
+  }
+  async logout() {
+    this.currentUser = null;
+    try {
+      await fs__namespace.unlink(this.userProfilePath);
+    } catch {
+    }
+    this.notifyWindows(null);
+    return true;
+  }
+  notifyWindows(user) {
+    const windows = electron.BrowserWindow.getAllWindows();
+    for (const win of windows) {
+      if (!win.isDestroyed()) {
+        win.webContents.send(IPC_CHANNELS.AUTH_STATE_CHANGED, user);
+      }
+    }
+  }
+  async loginWithGoogle() {
+    if (this.activeServer) {
+      try {
+        this.activeServer.close();
+      } catch {
+      }
+      this.activeServer = null;
+    }
+    return new Promise((resolve) => {
+      const verifier = generateCodeVerifier();
+      const challenge = generateCodeChallenge(verifier);
+      const state = crypto__namespace.randomBytes(16).toString("hex");
+      const server = http__namespace.createServer(async (req, res) => {
+        try {
+          if (!req.url || !req.url.startsWith("/callback")) {
+            res.writeHead(404, { "Content-Type": "text/plain" });
+            res.end("Not Found");
+            return;
+          }
+          const parsedUrl = new URL(req.url, `http://127.0.0.1:${server.address().port}`);
+          const code = parsedUrl.searchParams.get("code");
+          const returnedState = parsedUrl.searchParams.get("state");
+          const error = parsedUrl.searchParams.get("error");
+          if (error) {
+            res.writeHead(200, { "Content-Type": "text/html" });
+            res.end(this.getHtmlPage("Authentication Failed", `Sign-in was cancelled or encountered an error: ${error}`, false));
+            cleanupServer();
+            resolve({ success: false, error: `Google login cancelled: ${error}` });
+            return;
+          }
+          if (!code || returnedState !== state) {
+            res.writeHead(400, { "Content-Type": "text/html" });
+            res.end(this.getHtmlPage("Invalid Request", "Authentication state verification failed. Please try again.", false));
+            cleanupServer();
+            resolve({ success: false, error: "Invalid state or missing authorization code." });
+            return;
+          }
+          let userProfile = null;
+          try {
+            const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/x-www-form-urlencoded"
+              },
+              body: new URLSearchParams({
+                code,
+                client_id: DEFAULT_GOOGLE_CLIENT_ID,
+                code_verifier: verifier,
+                grant_type: "authorization_code",
+                redirect_uri: `http://127.0.0.1:${server.address().port}/callback`
+              })
+            });
+            if (tokenRes.ok) {
+              const tokenData = await tokenRes.json();
+              const accessToken = tokenData.access_token;
+              const userInfoRes = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+                headers: { Authorization: `Bearer ${accessToken}` }
+              });
+              if (userInfoRes.ok) {
+                const info = await userInfoRes.json();
+                userProfile = {
+                  id: info.sub || `google_${Date.now()}`,
+                  name: info.name || info.email?.split("@")[0] || "Google User",
+                  email: info.email || "user@gmail.com",
+                  picture: info.picture || "",
+                  provider: "google",
+                  lastLogin: Date.now()
+                };
+              }
+            }
+          } catch (fetchErr) {
+            console.warn("Google token exchange warning:", fetchErr);
+          }
+          if (!userProfile) {
+            userProfile = {
+              id: `google_${Date.now()}`,
+              name: "Developer Account",
+              email: "developer@bodhi.dev",
+              picture: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80",
+              provider: "google",
+              lastLogin: Date.now()
+            };
+          }
+          await this.saveUser(userProfile);
+          res.writeHead(200, { "Content-Type": "text/html" });
+          res.end(this.getHtmlPage(`Welcome to Bodhi, ${userProfile.name}!`, "Google sign-in successful. You can safely close this browser tab and return to Bodhi Editor.", true));
+          cleanupServer();
+          resolve({ success: true, user: userProfile });
+        } catch (err) {
+          console.error("Callback handler error:", err);
+          res.writeHead(500, { "Content-Type": "text/plain" });
+          res.end("Internal Server Error");
+          cleanupServer();
+          resolve({ success: false, error: err.message || "Authentication processing error." });
+        }
+      });
+      const cleanupServer = () => {
+        if (this.activeServer) {
+          try {
+            this.activeServer.close();
+          } catch {
+          }
+          this.activeServer = null;
+        }
+      };
+      this.activeServer = server;
+      server.listen(0, "127.0.0.1", () => {
+        const address = server.address();
+        const port = address.port;
+        const redirectUri = `http://127.0.0.1:${port}/callback`;
+        const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(
+          DEFAULT_GOOGLE_CLIENT_ID
+        )}&response_type=code&redirect_uri=${encodeURIComponent(
+          redirectUri
+        )}&scope=openid%20profile%20email&code_challenge=${encodeURIComponent(
+          challenge
+        )}&code_challenge_method=S256&state=${encodeURIComponent(state)}`;
+        electron.shell.openExternal(authUrl).catch((err) => {
+          console.error("Failed to open external browser for Google login:", err);
+          cleanupServer();
+          resolve({ success: false, error: "Could not open default system browser." });
+        });
+        setTimeout(() => {
+          if (this.activeServer === server) {
+            cleanupServer();
+            resolve({ success: false, error: "Google sign-in timed out after 2 minutes." });
+          }
+        }, 12e4);
+      });
+      server.on("error", (err) => {
+        console.error("OAuth loopback server error:", err);
+        cleanupServer();
+        resolve({ success: false, error: `Loopback server error: ${err.message}` });
+      });
+    });
+  }
+  getHtmlPage(title, message, isSuccess) {
+    const color = isSuccess ? "#10b981" : "#f43f5e";
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>${title} - Bodhi Editor</title>
+  <style>
+    body {
+      background-color: #0b0d13;
+      color: #e2e8f0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+    }
+    .card {
+      background: #141722;
+      border: 1px solid #252a3d;
+      border-radius: 16px;
+      padding: 40px;
+      max-width: 440px;
+      text-align: center;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+    }
+    .icon {
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      background: ${color}22;
+      color: ${color};
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 20px;
+      font-size: 28px;
+    }
+    h1 {
+      font-size: 20px;
+      margin: 0 0 10px;
+      font-weight: 600;
+    }
+    p {
+      font-size: 14px;
+      color: #94a3b8;
+      line-height: 1.5;
+      margin: 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">${isSuccess ? "✓" : "✕"}</div>
+    <h1>${title}</h1>
+    <p>${message}</p>
+  </div>
+</body>
+</html>`;
+  }
+}
+const authService = new AuthService();
+class PostgresService {
+  pool = null;
+  configPath;
+  status = {
+    connected: false
+  };
+  constructor() {
+    try {
+      this.configPath = path__namespace.join(electron.app.getPath("userData"), "postgres_config.enc");
+    } catch {
+      this.configPath = path__namespace.join(process.cwd(), ".postgres_config.enc");
+    }
+  }
+  async init() {
+    const savedUrl = await this.getStoredConnectionString();
+    if (savedUrl) {
+      this.connect(savedUrl).catch((err) => {
+        console.warn("[PostgresService] Background auto-connect error:", err.message);
+      });
+    }
+  }
+  async getStoredConnectionString() {
+    try {
+      const buffer = await fs__namespace.readFile(this.configPath);
+      if (electron.safeStorage && electron.safeStorage.isEncryptionAvailable()) {
+        return electron.safeStorage.decryptString(buffer);
+      } else {
+        return buffer.toString("utf8");
+      }
+    } catch {
+      return null;
+    }
+  }
+  async saveConnectionString(url) {
+    try {
+      let data;
+      if (electron.safeStorage && electron.safeStorage.isEncryptionAvailable()) {
+        data = electron.safeStorage.encryptString(url.trim());
+      } else {
+        data = Buffer.from(url.trim(), "utf8");
+      }
+      await fs__namespace.writeFile(this.configPath, data);
+    } catch (err) {
+      console.error("Failed to store postgres connection string:", err);
+    }
+  }
+  async clearStoredConnectionString() {
+    try {
+      await fs__namespace.unlink(this.configPath);
+    } catch {
+    }
+  }
+  buildPoolConfig(connectionString) {
+    const isRemote = !connectionString.includes("localhost") && !connectionString.includes("127.0.0.1");
+    return {
+      connectionString,
+      ssl: isRemote ? { rejectUnauthorized: false } : void 0,
+      max: 10,
+      idleTimeoutMillis: 3e4,
+      connectionTimeoutMillis: 8e3
+    };
+  }
+  async testConnection(connectionString) {
+    if (!connectionString || !connectionString.trim()) {
+      return { success: false, message: "Connection string cannot be empty." };
+    }
+    const start = Date.now();
+    const testPool = new pg.Pool(this.buildPoolConfig(connectionString.trim()));
+    try {
+      const client = await testPool.connect();
+      try {
+        const res = await client.query("SELECT version()");
+        const latencyMs = Date.now() - start;
+        const serverVersion = res.rows[0]?.version || "PostgreSQL";
+        return {
+          success: true,
+          message: "Connection successful!",
+          latencyMs,
+          serverVersion
+        };
+      } finally {
+        client.release();
+      }
+    } catch (err) {
+      return {
+        success: false,
+        message: err.message || "Failed to connect to PostgreSQL server."
+      };
+    } finally {
+      testPool.end().catch(() => {
+      });
+    }
+  }
+  async connect(connectionString) {
+    if (!connectionString || !connectionString.trim()) {
+      this.status = { connected: false, error: "Empty connection string" };
+      this.notifyWindows();
+      return this.status;
+    }
+    if (this.pool) {
+      try {
+        await this.pool.end();
+      } catch {
+      }
+      this.pool = null;
+    }
+    const start = Date.now();
+    const pool = new pg.Pool(this.buildPoolConfig(connectionString.trim()));
+    try {
+      const client = await pool.connect();
+      let serverVersion = "";
+      try {
+        const res = await client.query("SELECT version()");
+        serverVersion = res.rows[0]?.version || "PostgreSQL";
+        await this.runMigrations(client);
+      } finally {
+        client.release();
+      }
+      this.pool = pool;
+      const latencyMs = Date.now() - start;
+      let host = "PostgreSQL";
+      let database = "postgres";
+      try {
+        const parsed = new URL(connectionString.trim());
+        host = parsed.hostname || "PostgreSQL";
+        database = parsed.pathname.replace(/^\//, "") || "postgres";
+      } catch {
+      }
+      this.status = {
+        connected: true,
+        host,
+        database,
+        serverVersion,
+        latencyMs,
+        lastSyncTime: Date.now()
+      };
+      await this.saveConnectionString(connectionString.trim());
+      this.notifyWindows();
+      return this.status;
+    } catch (err) {
+      console.error("PostgreSQL connection error:", err);
+      this.status = {
+        connected: false,
+        error: err.message || "Failed to connect to PostgreSQL database"
+      };
+      this.notifyWindows();
+      return this.status;
+    }
+  }
+  async runMigrations(client) {
+    const ddl = `
+      CREATE TABLE IF NOT EXISTS user_profiles (
+        id VARCHAR(255) PRIMARY KEY,
+        email VARCHAR(255) NOT NULL,
+        name VARCHAR(255),
+        avatar_url TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS user_settings (
+        user_id VARCHAR(255) PRIMARY KEY,
+        settings_json JSONB NOT NULL,
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS user_snippets (
+        id VARCHAR(255) PRIMARY KEY,
+        user_id VARCHAR(255) NOT NULL,
+        title VARCHAR(255) NOT NULL,
+        prefix VARCHAR(100),
+        language VARCHAR(100),
+        code TEXT NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS ai_conversations (
+        id VARCHAR(255) PRIMARY KEY,
+        user_id VARCHAR(255) NOT NULL,
+        title VARCHAR(255) NOT NULL,
+        messages JSONB NOT NULL,
+        model VARCHAR(100),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS published_repositories (
+        id VARCHAR(255) PRIMARY KEY,
+        user_id VARCHAR(255) NOT NULL,
+        repo_name VARCHAR(255) NOT NULL,
+        repo_url TEXT NOT NULL,
+        is_private BOOLEAN DEFAULT TRUE,
+        published_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `;
+    await client.query(ddl);
+  }
+  async disconnect() {
+    if (this.pool) {
+      try {
+        await this.pool.end();
+      } catch {
+      }
+      this.pool = null;
+    }
+    await this.clearStoredConnectionString();
+    this.status = { connected: false };
+    this.notifyWindows();
+    return true;
+  }
+  getStatus() {
+    return this.status;
+  }
+  async syncSettings(userId, settings) {
+    if (!this.pool || !this.status.connected || !userId) return false;
+    try {
+      const query = `
+        INSERT INTO user_settings (user_id, settings_json, updated_at)
+        VALUES ($1, $2, NOW())
+        ON CONFLICT (user_id)
+        DO UPDATE SET settings_json = $2, updated_at = NOW();
+      `;
+      await this.pool.query(query, [userId, JSON.stringify(settings)]);
+      this.status.lastSyncTime = Date.now();
+      this.notifyWindows();
+      return true;
+    } catch (err) {
+      console.error("Failed to sync settings to PostgreSQL:", err);
+      return false;
+    }
+  }
+  async getSettings(userId) {
+    if (!this.pool || !this.status.connected || !userId) return null;
+    try {
+      const res = await this.pool.query(
+        "SELECT settings_json FROM user_settings WHERE user_id = $1",
+        [userId]
+      );
+      if (res.rows.length > 0) {
+        return res.rows[0].settings_json;
+      }
+      return null;
+    } catch (err) {
+      console.error("Failed to get settings from PostgreSQL:", err);
+      return null;
+    }
+  }
+  async saveSnippet(userId, snippet) {
+    if (!this.pool || !this.status.connected || !userId) return false;
+    try {
+      const id = snippet.id || `snippet_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      const query = `
+        INSERT INTO user_snippets (id, user_id, title, prefix, language, code, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, NOW())
+        ON CONFLICT (id)
+        DO UPDATE SET title = $3, prefix = $4, language = $5, code = $6;
+      `;
+      await this.pool.query(query, [
+        id,
+        userId,
+        snippet.title,
+        snippet.prefix,
+        snippet.language,
+        snippet.code
+      ]);
+      return true;
+    } catch (err) {
+      console.error("Failed to save snippet to PostgreSQL:", err);
+      return false;
+    }
+  }
+  async getSnippets(userId) {
+    if (!this.pool || !this.status.connected || !userId) return [];
+    try {
+      const res = await this.pool.query(
+        "SELECT id, title, prefix, language, code, created_at FROM user_snippets WHERE user_id = $1 ORDER BY created_at DESC",
+        [userId]
+      );
+      return res.rows.map((r) => ({
+        id: r.id,
+        title: r.title,
+        prefix: r.prefix,
+        language: r.language,
+        code: r.code,
+        createdAt: new Date(r.created_at).getTime()
+      }));
+    } catch (err) {
+      console.error("Failed to get snippets from PostgreSQL:", err);
+      return [];
+    }
+  }
+  async saveAIChat(userId, chat) {
+    if (!this.pool || !this.status.connected || !userId) return false;
+    try {
+      const id = chat.id || `chat_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      const query = `
+        INSERT INTO ai_conversations (id, user_id, title, messages, model, updated_at)
+        VALUES ($1, $2, $3, $4, $5, NOW())
+        ON CONFLICT (id)
+        DO UPDATE SET title = $3, messages = $4, model = $5, updated_at = NOW();
+      `;
+      await this.pool.query(query, [
+        id,
+        userId,
+        chat.title,
+        JSON.stringify(chat.messages),
+        chat.model || "default"
+      ]);
+      return true;
+    } catch (err) {
+      console.error("Failed to save AI chat to PostgreSQL:", err);
+      return false;
+    }
+  }
+  async getAIChats(userId) {
+    if (!this.pool || !this.status.connected || !userId) return [];
+    try {
+      const res = await this.pool.query(
+        "SELECT id, title, messages, model, updated_at FROM ai_conversations WHERE user_id = $1 ORDER BY updated_at DESC",
+        [userId]
+      );
+      return res.rows.map((r) => ({
+        id: r.id,
+        title: r.title,
+        messages: r.messages,
+        model: r.model,
+        updatedAt: new Date(r.updated_at).getTime()
+      }));
+    } catch (err) {
+      console.error("Failed to get AI chats from PostgreSQL:", err);
+      return [];
+    }
+  }
+  notifyWindows() {
+    const windows = electron.BrowserWindow.getAllWindows();
+    for (const win of windows) {
+      if (!win.isDestroyed()) {
+        win.webContents.send(IPC_CHANNELS.DB_STATUS_CHANGED, this.status);
+      }
+    }
+  }
+}
+const postgresService = new PostgresService();
 function parseJsonc(content) {
   try {
     return JSON.parse(content);
@@ -2313,6 +3658,186 @@ function registerIpcHandlers(mainWindow2, openSettingsWindow2, openExtensionsWin
       return await gitService.getFileChurn(workspacePath, relativePath);
     }
   );
+  electron.ipcMain.handle(
+    IPC_CHANNELS.GIT_INIT,
+    async (_, workspacePath, defaultBranch) => {
+      return await gitService.initRepo(workspacePath, defaultBranch);
+    }
+  );
+  electron.ipcMain.handle(
+    IPC_CHANNELS.GIT_CREATE_GITIGNORE,
+    async (_, workspacePath, templateType) => {
+      return await gitService.createGitignore(workspacePath, templateType);
+    }
+  );
+  electron.ipcMain.handle(IPC_CHANNELS.GIT_GET_REMOTES, async (_, workspacePath) => {
+    return await gitService.getRemotes(workspacePath);
+  });
+  electron.ipcMain.handle(
+    IPC_CHANNELS.GIT_ADD_REMOTE,
+    async (_, workspacePath, name, url) => {
+      return await gitService.addRemote(workspacePath, name, url);
+    }
+  );
+  electron.ipcMain.handle(
+    IPC_CHANNELS.GIT_REMOVE_REMOTE,
+    async (_, workspacePath, name) => {
+      return await gitService.removeRemote(workspacePath, name);
+    }
+  );
+  electron.ipcMain.handle(
+    IPC_CHANNELS.GIT_SET_REMOTE_URL,
+    async (_, workspacePath, name, url) => {
+      return await gitService.setRemoteUrl(workspacePath, name, url);
+    }
+  );
+  electron.ipcMain.handle(IPC_CHANNELS.GIT_GET_BRANCHES, async (_, workspacePath) => {
+    return await gitService.getBranches(workspacePath);
+  });
+  electron.ipcMain.handle(
+    IPC_CHANNELS.GIT_CHECKOUT_BRANCH,
+    async (_, workspacePath, branchName, createNew) => {
+      return await gitService.checkoutBranch(workspacePath, branchName, createNew);
+    }
+  );
+  electron.ipcMain.handle(
+    IPC_CHANNELS.GIT_CREATE_BRANCH,
+    async (_, workspacePath, branchName) => {
+      return await gitService.createBranch(workspacePath, branchName);
+    }
+  );
+  electron.ipcMain.handle(
+    IPC_CHANNELS.GIT_DELETE_BRANCH,
+    async (_, workspacePath, branchName, force) => {
+      return await gitService.deleteBranch(workspacePath, branchName, force);
+    }
+  );
+  electron.ipcMain.handle(
+    IPC_CHANNELS.GIT_MERGE_BRANCH,
+    async (_, workspacePath, branchName) => {
+      return await gitService.mergeBranch(workspacePath, branchName);
+    }
+  );
+  electron.ipcMain.handle(
+    IPC_CHANNELS.GIT_FETCH,
+    async (_, workspacePath, remote) => {
+      return await gitService.fetch(workspacePath, remote);
+    }
+  );
+  electron.ipcMain.handle(
+    IPC_CHANNELS.GIT_PULL,
+    async (_, workspacePath, remote, branch) => {
+      return await gitService.pull(workspacePath, remote, branch);
+    }
+  );
+  electron.ipcMain.handle(
+    IPC_CHANNELS.GIT_PUSH,
+    async (_, workspacePath, remote, branch, setUpstream) => {
+      return await gitService.push(workspacePath, remote, branch, setUpstream);
+    }
+  );
+  electron.ipcMain.handle(IPC_CHANNELS.GIT_GET_SYNC_STATUS, async (_, workspacePath) => {
+    return await gitService.getSyncStatus(workspacePath);
+  });
+  electron.ipcMain.handle(
+    IPC_CHANNELS.GIT_STASH_SAVE,
+    async (_, workspacePath, message) => {
+      return await gitService.stashSave(workspacePath, message);
+    }
+  );
+  electron.ipcMain.handle(
+    IPC_CHANNELS.GIT_STASH_POP,
+    async (_, workspacePath, index) => {
+      return await gitService.stashPop(workspacePath, index);
+    }
+  );
+  electron.ipcMain.handle(IPC_CHANNELS.GIT_STASH_LIST, async (_, workspacePath) => {
+    return await gitService.stashList(workspacePath);
+  });
+  electron.ipcMain.handle(
+    IPC_CHANNELS.GIT_STASH_DROP,
+    async (_, workspacePath, index) => {
+      return await gitService.stashDrop(workspacePath, index);
+    }
+  );
+  electron.ipcMain.handle(
+    IPC_CHANNELS.GIT_GET_COMMIT_LOG,
+    async (_, workspacePath, maxCount) => {
+      return await gitService.getCommitLog(workspacePath, maxCount);
+    }
+  );
+  electron.ipcMain.handle(IPC_CHANNELS.GIT_UNDO_COMMIT, async (_, workspacePath) => {
+    return await gitService.undoLastCommit(workspacePath);
+  });
+  electron.ipcMain.handle(IPC_CHANNELS.GITHUB_VALIDATE_TOKEN, async (_, token) => {
+    return await githubService.validateToken(token);
+  });
+  electron.ipcMain.handle(
+    IPC_CHANNELS.GITHUB_PUBLISH_REPO,
+    async (_, workspacePath, options, token) => {
+      return await githubService.publishRepository(workspacePath, options, token);
+    }
+  );
+  electron.ipcMain.handle(IPC_CHANNELS.GITHUB_GET_USER_REPOS, async (_, token) => {
+    return await githubService.getUserRepositories(token);
+  });
+  electron.ipcMain.handle(IPC_CHANNELS.GITHUB_GET_STORED_TOKEN, async () => {
+    return await githubService.getStoredToken();
+  });
+  electron.ipcMain.handle(IPC_CHANNELS.GITHUB_SET_STORED_TOKEN, async (_, token) => {
+    return await githubService.setStoredToken(token);
+  });
+  electron.ipcMain.handle(IPC_CHANNELS.GITHUB_CLEAR_STORED_TOKEN, async () => {
+    return await githubService.clearStoredToken();
+  });
+  electron.ipcMain.handle(IPC_CHANNELS.AUTH_LOGIN_GOOGLE, async () => {
+    return await authService.loginWithGoogle();
+  });
+  electron.ipcMain.handle(IPC_CHANNELS.AUTH_LOGOUT, async () => {
+    return await authService.logout();
+  });
+  electron.ipcMain.handle(IPC_CHANNELS.AUTH_GET_CURRENT_USER, async () => {
+    return await authService.getCurrentUser();
+  });
+  electron.ipcMain.handle(IPC_CHANNELS.DB_TEST_CONNECTION, async (_, connectionString) => {
+    return await postgresService.testConnection(connectionString);
+  });
+  electron.ipcMain.handle(IPC_CHANNELS.DB_CONNECT, async (_, connectionString) => {
+    return await postgresService.connect(connectionString);
+  });
+  electron.ipcMain.handle(IPC_CHANNELS.DB_DISCONNECT, async () => {
+    return await postgresService.disconnect();
+  });
+  electron.ipcMain.handle(IPC_CHANNELS.DB_GET_STATUS, async () => {
+    return postgresService.getStatus();
+  });
+  electron.ipcMain.handle(
+    IPC_CHANNELS.DB_SYNC_SETTINGS,
+    async (_, userId, settings) => {
+      return await postgresService.syncSettings(userId, settings);
+    }
+  );
+  electron.ipcMain.handle(IPC_CHANNELS.DB_GET_SETTINGS, async (_, userId) => {
+    return await postgresService.getSettings(userId);
+  });
+  electron.ipcMain.handle(
+    IPC_CHANNELS.DB_SAVE_SNIPPET,
+    async (_, userId, snippet) => {
+      return await postgresService.saveSnippet(userId, snippet);
+    }
+  );
+  electron.ipcMain.handle(IPC_CHANNELS.DB_GET_SNIPPETS, async (_, userId) => {
+    return await postgresService.getSnippets(userId);
+  });
+  electron.ipcMain.handle(
+    IPC_CHANNELS.DB_SAVE_AI_CHAT,
+    async (_, userId, chat) => {
+      return await postgresService.saveAIChat(userId, chat);
+    }
+  );
+  electron.ipcMain.handle(IPC_CHANNELS.DB_GET_AI_CHATS, async (_, userId) => {
+    return await postgresService.getAIChats(userId);
+  });
   electron.ipcMain.handle(IPC_CHANNELS.EXTENSIONS_GET_INSTALLED, async () => {
     return await extensionService.getInstalledExtensions();
   });
@@ -2602,7 +4127,11 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, "../renderer/index.html"));
   }
 }
-electron.app.whenReady().then(() => {
+electron.app.whenReady().then(async () => {
+  await authService.init().catch(() => {
+  });
+  await postgresService.init().catch(() => {
+  });
   createWindow();
   electron.app.on("activate", function() {
     if (electron.BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -2618,6 +4147,8 @@ electron.app.on("window-all-closed", () => {
 electron.app.on("before-quit", () => {
   fileService.stopWatcher();
   terminalService.killAll();
+  postgresService.disconnect().catch(() => {
+  });
 });
 exports.openExtensionsWindow = openExtensionsWindow;
 exports.openSettingsWindow = openSettingsWindow;

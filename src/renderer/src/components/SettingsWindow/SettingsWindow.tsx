@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import {
   Sliders,
   Eye,
@@ -22,32 +22,58 @@ import {
   Type,
   RefreshCw,
   AlertCircle,
-  Flame
+  Flame,
+  Database,
+  Server,
+  CheckCircle2
 } from 'lucide-react'
 import { useEditorStore } from '../../store/useEditorStore'
+import { useDatabaseStore } from '../../store/useDatabaseStore'
 import { EditorSettings, ShellType } from '../../../../shared/types'
 import { THEMES, ACCENT_COLORS, getAccentsForTheme } from '../../theme/themeRegistry'
 import { FONT_THEMES } from '../../theme/fontRegistry'
 
-type SettingsCategory = 'editor' | 'appearance' | 'terminal' | 'files' | 'ai' | 'shortcuts'
+type SettingsCategory =
+  | 'editor'
+  | 'appearance'
+  | 'terminal'
+  | 'files'
+  | 'ai'
+  | 'database'
+  | 'shortcuts'
 
 export const SettingsWindow: React.FC = () => {
   const { settings, updateSettings, initSettingsSync } = useEditorStore()
+  const {
+    status: dbStatus,
+    isTesting: isDbTesting,
+    isConnecting: isDbConnecting,
+    isSyncing: isDbSyncing,
+    testResult: dbTestResult,
+    testConnection: testDbConnection,
+    connect: connectDb,
+    disconnect: disconnectDb,
+    syncSettingsNow,
+    initDb
+  } = useDatabaseStore()
+
   const [activeCategory, setActiveCategory] = useState<SettingsCategory>('editor')
   const [searchQuery, setSearchQuery] = useState('')
   const [showApiKey, setShowApiKey] = useState(false)
   const [justSaved, setJustSaved] = useState(false)
   const [isTestingAiKey, setIsTestingAiKey] = useState(false)
   const [aiTestResult, setAiTestResult] = useState<{ success: boolean; message: string } | null>(null)
+  const [dbUrlInput, setDbUrlInput] = useState('')
 
   // Listen to cross-window sync and set window title
   useEffect(() => {
     document.title = 'Settings - Bodhi'
+    initDb()
     const unsub = initSettingsSync()
     return () => {
       unsub()
     }
-  }, [initSettingsSync])
+  }, [initSettingsSync, initDb])
 
   const handleMinimize = (): void => {
     window.bodhiAPI?.minimizeWindow?.()
@@ -118,6 +144,7 @@ export const SettingsWindow: React.FC = () => {
     { id: 'terminal', label: 'Terminal', icon: <Terminal size={16} /> },
     { id: 'files', label: 'Files & Save', icon: <Save size={16} /> },
     { id: 'ai', label: 'AI & Intelligence', icon: <Sparkles size={16} /> },
+    { id: 'database', label: 'Cloud & Database', icon: <Database size={16} /> },
     { id: 'shortcuts', label: 'Keybindings', icon: <Keyboard size={16} /> }
   ] as const
 
@@ -1332,6 +1359,218 @@ export const SettingsWindow: React.FC = () => {
                         className="flex-1 cursor-pointer"
                       />
                       <span className="text-[10px] text-cortex-muted">1.0 (Creative)</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Category: POSTGRESQL & CLOUD DATABASE */}
+              {activeCategory === 'database' && (
+                <div className="space-y-5 animate-fade-in">
+                  <div className="flex items-center justify-between pb-2 border-b border-cortex-border">
+                    <div className="flex items-center gap-2">
+                      <Database size={16} className="text-cortex-accent" />
+                      <h2 className="text-sm font-semibold text-cortex-text">
+                        PostgreSQL Database & Cloud Sync
+                      </h2>
+                    </div>
+                    <span className="text-[11px] text-cortex-muted">
+                      Cloud persistence for editor settings, snippets & chat
+                    </span>
+                  </div>
+
+                  {/* Status Banner */}
+                  <div
+                    className={`p-4 rounded-xl border flex items-center justify-between transition-all ${
+                      dbStatus.connected
+                        ? 'bg-emerald-500/10 border-emerald-500/30'
+                        : 'bg-cortex-panel border-cortex-border'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div
+                        className={`w-9 h-9 rounded-lg flex items-center justify-center ${
+                          dbStatus.connected
+                            ? 'bg-emerald-500/20 text-emerald-400'
+                            : 'bg-cortex-surface text-cortex-muted'
+                        }`}
+                      >
+                        <Server size={18} />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-semibold text-white">
+                            {dbStatus.connected ? 'Connected to PostgreSQL' : 'Database Offline'}
+                          </span>
+                          {dbStatus.connected && (
+                            <span className="flex items-center gap-1 px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-400 font-mono text-[10px]">
+                              <CheckCircle2 size={10} />
+                              Active ({dbStatus.latencyMs}ms)
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-cortex-muted mt-0.5">
+                          {dbStatus.connected
+                            ? `${dbStatus.host} / ${dbStatus.database} — ${dbStatus.serverVersion?.slice(0, 30)}`
+                            : 'Connect to PostgreSQL to enable cross-device cloud sync and persistence.'}
+                        </p>
+                      </div>
+                    </div>
+
+                    {dbStatus.connected ? (
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => syncSettingsNow()}
+                          disabled={isDbSyncing}
+                          className="px-3 py-1.5 rounded-lg bg-cortex-surface hover:bg-cortex-border text-white text-xs font-medium flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                        >
+                          <RefreshCw
+                            size={12}
+                            className={isDbSyncing ? 'animate-spin text-cortex-accent' : ''}
+                          />
+                          <span>{isDbSyncing ? 'Syncing...' : 'Sync Now'}</span>
+                        </button>
+                        <button
+                          onClick={() => disconnectDb()}
+                          className="px-3 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-400 text-xs font-medium transition-colors"
+                        >
+                          Disconnect
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  {/* Connection String Form */}
+                  <div className="p-4 rounded-xl bg-cortex-panel border border-cortex-border space-y-3">
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium text-white flex items-center justify-between">
+                        <span>PostgreSQL Connection URI</span>
+                        <span className="text-[10px] text-cortex-muted">
+                          Encrypted with Electron safeStorage
+                        </span>
+                      </label>
+                      <input
+                        type="password"
+                        placeholder="postgresql://user:password@db.example.com:5432/postgres?sslmode=require"
+                        value={dbUrlInput}
+                        onChange={(e) => setDbUrlInput(e.target.value)}
+                        className="w-full px-3 py-2 rounded-lg bg-cortex-surface border border-cortex-border text-xs text-white placeholder:text-cortex-muted/60 focus:outline-none focus:border-cortex-accent font-mono"
+                      />
+                    </div>
+
+                    {/* Quick presets */}
+                    <div className="flex items-center gap-2 pt-0.5">
+                      <span className="text-[10px] text-cortex-muted">Quick Presets:</span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setDbUrlInput('postgresql://postgres:postgres@localhost:5432/bodhi')
+                        }
+                        className="px-2 py-0.5 rounded bg-cortex-surface hover:bg-cortex-border text-[10px] text-cortex-muted hover:text-white font-mono transition-colors"
+                      >
+                        Localhost (5432)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setDbUrlInput(
+                            'postgresql://postgres.[project-ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres?sslmode=require'
+                          )
+                        }
+                        className="px-2 py-0.5 rounded bg-cortex-surface hover:bg-cortex-border text-[10px] text-cortex-muted hover:text-white font-mono transition-colors"
+                      >
+                        Supabase / AWS
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setDbUrlInput(
+                            'postgresql://[user]:[password]@[endpoint].neon.tech/neondb?sslmode=require'
+                          )
+                        }
+                        className="px-2 py-0.5 rounded bg-cortex-surface hover:bg-cortex-border text-[10px] text-cortex-muted hover:text-white font-mono transition-colors"
+                      >
+                        Neon Serverless
+                      </button>
+                    </div>
+
+                    {/* Action buttons */}
+                    <div className="flex items-center gap-2 pt-2">
+                      <button
+                        onClick={() => testDbConnection(dbUrlInput)}
+                        disabled={!dbUrlInput.trim() || isDbTesting}
+                        className="px-3.5 py-2 rounded-lg bg-cortex-surface hover:bg-cortex-border text-white text-xs font-medium flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                      >
+                        {isDbTesting ? (
+                          <RefreshCw size={13} className="animate-spin" />
+                        ) : (
+                          <Check size={13} />
+                        )}
+                        <span>Test Connection</span>
+                      </button>
+
+                      <button
+                        onClick={() => connectDb(dbUrlInput)}
+                        disabled={!dbUrlInput.trim() || isDbConnecting}
+                        className="px-4 py-2 rounded-lg bg-cortex-accent text-black text-xs font-semibold flex items-center gap-1.5 transition-all hover:brightness-110 active:scale-[0.99] disabled:opacity-50 shadow-sm"
+                      >
+                        {isDbConnecting ? (
+                          <RefreshCw size={13} className="animate-spin" />
+                        ) : (
+                          <Database size={13} />
+                        )}
+                        <span>Connect & Initialize</span>
+                      </button>
+                    </div>
+
+                    {/* Test result display */}
+                    {dbTestResult && (
+                      <div
+                        className={`p-3 rounded-lg text-xs flex items-center justify-between border ${
+                          dbTestResult.success
+                            ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                            : 'bg-rose-500/10 border-rose-500/30 text-rose-400'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 truncate">
+                          {dbTestResult.success ? (
+                            <CheckCircle2 size={15} />
+                          ) : (
+                            <AlertCircle size={15} />
+                          )}
+                          <span className="truncate">{dbTestResult.message}</span>
+                        </div>
+                        {dbTestResult.latencyMs && (
+                          <span className="font-mono text-[11px] opacity-80 shrink-0">
+                            Latency: {dbTestResult.latencyMs}ms
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Schema Info Card */}
+                  <div className="p-4 rounded-xl bg-cortex-panel/60 border border-cortex-border space-y-2">
+                    <h3 className="text-xs font-semibold text-white flex items-center gap-1.5">
+                      <CheckCircle2 size={13} className="text-cortex-accent" />
+                      <span>Automatic Schema Migrations</span>
+                    </h3>
+                    <p className="text-[11px] text-cortex-muted leading-relaxed">
+                      Connecting to PostgreSQL automatically provisions and verifies 5 relational tables:
+                    </p>
+                    <div className="grid grid-cols-2 gap-2 pt-1 font-mono text-[10px]">
+                      <div className="p-2 rounded bg-cortex-surface border border-cortex-border text-cortex-text">
+                        <span className="text-cortex-accent">user_profiles</span>: Google identity & accounts
+                      </div>
+                      <div className="p-2 rounded bg-cortex-surface border border-cortex-border text-cortex-text">
+                        <span className="text-cortex-accent">user_settings</span>: JSONB configs & themes
+                      </div>
+                      <div className="p-2 rounded bg-cortex-surface border border-cortex-border text-cortex-text">
+                        <span className="text-cortex-accent">user_snippets</span>: Custom reusable code snippets
+                      </div>
+                      <div className="p-2 rounded bg-cortex-surface border border-cortex-border text-cortex-text">
+                        <span className="text-cortex-accent">ai_conversations</span>: Persistent AI chats
+                      </div>
                     </div>
                   </div>
                 </div>

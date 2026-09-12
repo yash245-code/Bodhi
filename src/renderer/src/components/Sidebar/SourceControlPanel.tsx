@@ -10,13 +10,22 @@ import {
   ChevronRight,
   GitCommit,
   CheckCircle2,
-  AlertCircle,
-  GitCompare
+  GitCompare,
+  UploadCloud,
+  ArrowDown,
+  ArrowUp,
+  Archive,
+  History,
+  Undo2,
+  Trash2,
+  Play
 } from 'lucide-react'
 import { useGitStore } from '../../store/useGitStore'
 import { useWorkspaceStore } from '../../store/useWorkspaceStore'
 import { useEditorStore } from '../../store/useEditorStore'
 import { GitFileStatus, GitFileStatusType } from '@shared/types'
+import { PublishToGitHubModal } from './PublishToGitHubModal'
+import { BranchSwitcherModal } from './BranchSwitcherModal'
 
 function getStatusBadge(status: GitFileStatusType): { text: string; color: string; bg: string } {
   switch (status) {
@@ -43,9 +52,15 @@ export const SourceControlPanel: React.FC = () => {
     stagedFiles,
     unstagedFiles,
     untrackedFiles,
+    remotes,
+    syncStatus,
+    stashes,
+    commitHistory,
     isLoading,
     isCommitting,
+    isSyncing,
     commitMessage,
+    gitError,
     refreshGitStatus,
     stageFile,
     unstageFile,
@@ -53,7 +68,17 @@ export const SourceControlPanel: React.FC = () => {
     unstageAll,
     discardChanges,
     commitChanges,
-    setCommitMessage
+    setCommitMessage,
+    initRepo,
+    createGitignore,
+    openBranchModal,
+    openPublishModal,
+    syncChanges,
+    stashSave,
+    stashPop,
+    stashDrop,
+    undoLastCommit,
+    setGitError
   } = useGitStore()
 
   const { rootPath, openFolder } = useWorkspaceStore()
@@ -62,6 +87,10 @@ export const SourceControlPanel: React.FC = () => {
   const [isStagedOpen, setIsStagedOpen] = useState(true)
   const [isChangesOpen, setIsChangesOpen] = useState(true)
   const [isUntrackedOpen, setIsUntrackedOpen] = useState(true)
+  const [isStashOpen, setIsStashOpen] = useState(false)
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false)
+  const [stashInput, setStashInput] = useState('')
+  const [showStashInput, setShowStashInput] = useState(false)
 
   // Initial load
   useEffect(() => {
@@ -71,6 +100,7 @@ export const SourceControlPanel: React.FC = () => {
   }, [rootPath, refreshGitStatus])
 
   const totalChanges = stagedFiles.length + unstagedFiles.length + untrackedFiles.length
+  const hasRemote = remotes.length > 0
 
   const handleCommit = async (): Promise<void> => {
     if (!commitMessage.trim()) return
@@ -84,6 +114,12 @@ export const SourceControlPanel: React.FC = () => {
     }
   }
 
+  const handleCreateStash = async (): Promise<void> => {
+    await stashSave(stashInput.trim() || undefined)
+    setStashInput('')
+    setShowStashInput(false)
+  }
+
   if (!rootPath) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center p-4 text-center select-none text-bodhi-muted">
@@ -92,7 +128,7 @@ export const SourceControlPanel: React.FC = () => {
         <p className="text-[11px] mb-3">Open a workspace to view Git source control.</p>
         <button
           onClick={() => openFolder()}
-          className="px-3 py-1 rounded bg-bodhi-accent text-black font-semibold text-xs transition-transform active:scale-95"
+          className="px-3 py-1.5 rounded-lg bg-bodhi-accent text-black font-semibold text-xs transition-transform active:scale-95 shadow-sm"
         >
           Open Folder
         </button>
@@ -102,21 +138,57 @@ export const SourceControlPanel: React.FC = () => {
 
   if (!isGitRepo) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center p-4 text-center select-none text-bodhi-muted">
-        <div className="w-10 h-10 rounded-full bg-bodhi-surface flex items-center justify-center text-bodhi-muted mb-2 border border-BODHI-border">
-          <AlertCircle size={20} />
+      <div className="flex-1 flex flex-col items-center justify-center p-6 text-center select-none text-bodhi-muted space-y-4">
+        <div className="w-12 h-12 rounded-2xl bg-bodhi-surface flex items-center justify-center text-bodhi-accent border border-BODHI-border shadow-sm">
+          <GitBranch size={24} />
         </div>
-        <h4 className="text-xs font-semibold text-BODHI-text mb-1">No Git Repository Found</h4>
-        <p className="text-[11px] mb-3 max-w-[200px]">
-          The folder is not tracked by Git. Initialize a repository to enable version control.
-        </p>
-        <button
-          onClick={() => refreshGitStatus()}
-          className="flex items-center gap-1 px-3 py-1.5 rounded bg-bodhi-surface hover:bg-BODHI-active border border-BODHI-border text-xs text-BODHI-text transition-all shadow-sm"
-        >
-          <RefreshCw size={12} className={isLoading ? 'animate-spin' : ''} />
-          <span>Check Again</span>
-        </button>
+        <div>
+          <h4 className="text-sm font-semibold text-white mb-1">No Git Repository</h4>
+          <p className="text-[11px] text-bodhi-muted max-w-[220px] mx-auto leading-relaxed">
+            Initialize a Git repository to start version controlling your code or publish directly to GitHub.
+          </p>
+        </div>
+
+        <div className="w-full space-y-2 max-w-[200px]">
+          <button
+            onClick={() => initRepo('main')}
+            disabled={isLoading}
+            className="w-full py-2 px-3 rounded-lg bg-bodhi-accent text-black font-semibold text-xs transition-all hover:brightness-110 active:scale-[0.98] shadow-md flex items-center justify-center gap-1.5"
+          >
+            {isLoading ? (
+              <RefreshCw size={13} className="animate-spin" />
+            ) : (
+              <Play size={13} />
+            )}
+            <span>Initialize Repository</span>
+          </button>
+
+          <button
+            onClick={openPublishModal}
+            className="w-full py-2 px-3 rounded-lg bg-bodhi-surface hover:bg-BODHI-active border border-BODHI-border text-white text-xs transition-all flex items-center justify-center gap-1.5 shadow-xs"
+          >
+            <UploadCloud size={13} className="text-bodhi-accent" />
+            <span>Publish to GitHub</span>
+          </button>
+        </div>
+
+        {/* Quick .gitignore generator */}
+        <div className="pt-2 border-t border-BODHI-border/60 w-full max-w-[200px]">
+          <span className="text-[10px] text-bodhi-muted block mb-1.5">Add .gitignore template:</span>
+          <div className="flex items-center justify-center gap-1">
+            {['node', 'python', 'rust'].map((tmpl) => (
+              <button
+                key={tmpl}
+                onClick={() => createGitignore(tmpl)}
+                className="px-2 py-0.5 rounded bg-bodhi-surface hover:bg-bodhi-accent/20 hover:text-bodhi-accent text-[10px] uppercase font-mono border border-BODHI-border text-bodhi-muted transition-colors"
+              >
+                {tmpl}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <PublishToGitHubModal />
       </div>
     )
   }
@@ -149,7 +221,6 @@ export const SourceControlPanel: React.FC = () => {
 
         {/* Hover Action Buttons */}
         <div className="hidden group-hover:flex items-center gap-0.5 mr-1.5">
-          {/* Open Diff View Button */}
           <button
             onClick={(e) => {
               e.stopPropagation()
@@ -238,21 +309,60 @@ export const SourceControlPanel: React.FC = () => {
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-BODHI-sidebar text-BODHI-text select-none">
       {/* Header */}
-      <div className="h-8 px-3 flex items-center justify-between border-b border-BODHI-border shrink-0">
+      <div className="h-9 px-3 flex items-center justify-between border-b border-BODHI-border shrink-0 bg-bodhi-panel/50">
         <div className="flex items-center gap-1.5 truncate">
           <span className="text-[11px] font-bold uppercase tracking-wider text-bodhi-muted">
             Source Control
           </span>
+
+          {/* Branch Selector Pill */}
           {branch && (
-            <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-bodhi-surface text-bodhi-accent font-mono text-[10px] border border-BODHI-border">
+            <button
+              onClick={openBranchModal}
+              title="Click to switch or create branch"
+              className="flex items-center gap-1 px-2 py-0.5 rounded bg-bodhi-surface hover:bg-BODHI-active text-bodhi-accent font-mono text-[10px] border border-BODHI-border transition-colors cursor-pointer"
+            >
               <GitBranch size={10} />
-              <span className="truncate max-w-[80px]">{branch}</span>
-            </span>
+              <span className="truncate max-w-[75px]">{branch}</span>
+            </button>
           )}
         </div>
 
         {/* Top actions */}
-        <div className="flex items-center gap-0.5 text-bodhi-muted">
+        <div className="flex items-center gap-1 text-bodhi-muted">
+          {/* Publish or Sync Button */}
+          {!hasRemote ? (
+            <button
+              onClick={openPublishModal}
+              title="Publish to GitHub"
+              className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-bodhi-accent/15 text-bodhi-accent border border-bodhi-accent/30 text-[10px] font-medium hover:bg-bodhi-accent/25 transition-colors"
+            >
+              <UploadCloud size={11} />
+              <span>Publish</span>
+            </button>
+          ) : (
+            <button
+              onClick={syncChanges}
+              disabled={isSyncing}
+              title={`Sync Changes: ${syncStatus.ahead} outgoing, ${syncStatus.behind} incoming`}
+              className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-bodhi-surface hover:bg-BODHI-active border border-BODHI-border text-white text-[10px] font-mono transition-colors disabled:opacity-50"
+            >
+              <RefreshCw size={10} className={isSyncing ? 'animate-spin text-bodhi-accent' : ''} />
+              {syncStatus.behind > 0 && (
+                <span className="text-emerald-400 flex items-center">
+                  <ArrowDown size={9} />
+                  {syncStatus.behind}
+                </span>
+              )}
+              {syncStatus.ahead > 0 && (
+                <span className="text-bodhi-accent flex items-center">
+                  <ArrowUp size={9} />
+                  {syncStatus.ahead}
+                </span>
+              )}
+            </button>
+          )}
+
           {totalChanges > 0 && stagedFiles.length > 0 && (
             <button
               onClick={() => unstageAll()}
@@ -283,6 +393,16 @@ export const SourceControlPanel: React.FC = () => {
         </div>
       </div>
 
+      {/* Error alert if any */}
+      {gitError && (
+        <div className="px-3 py-1.5 bg-rose-500/10 border-b border-rose-500/20 text-rose-400 text-[11px] flex items-center justify-between">
+          <span className="truncate">{gitError}</span>
+          <button onClick={() => setGitError(null)} className="ml-2 hover:text-white">
+            ×
+          </button>
+        </div>
+      )}
+
       {/* Commit Box */}
       <div className="p-3 border-b border-BODHI-border space-y-2 shrink-0">
         <textarea
@@ -294,34 +414,47 @@ export const SourceControlPanel: React.FC = () => {
           className="w-full bg-bodhi-panel text-xs text-BODHI-text p-2 rounded border border-BODHI-border focus:border-bodhi-accent focus:outline-none resize-none placeholder:text-bodhi-muted"
         />
 
-        <button
-          onClick={handleCommit}
-          disabled={!commitMessage.trim() || isCommitting || totalChanges === 0}
-          className={`w-full py-1.5 rounded flex items-center justify-center gap-1.5 text-xs font-semibold transition-all ${
-            commitMessage.trim() && totalChanges > 0 && !isCommitting
-              ? 'bg-bodhi-accent text-black hover:opacity-90 active:scale-[0.99] shadow-sm'
-              : 'bg-bodhi-surface text-bodhi-muted opacity-50 cursor-not-allowed border border-BODHI-border'
-          }`}
-        >
-          {isCommitting ? (
-            <>
-              <RefreshCw size={13} className="animate-spin" />
-              <span>Committing...</span>
-            </>
-          ) : (
-            <>
-              <GitCommit size={13} />
-              <span>Commit Changes</span>
-            </>
+        <div className="flex gap-1.5">
+          <button
+            onClick={handleCommit}
+            disabled={!commitMessage.trim() || isCommitting || totalChanges === 0}
+            className={`flex-1 py-1.5 rounded flex items-center justify-center gap-1.5 text-xs font-semibold transition-all ${
+              commitMessage.trim() && totalChanges > 0 && !isCommitting
+                ? 'bg-bodhi-accent text-black hover:opacity-90 active:scale-[0.99] shadow-sm'
+                : 'bg-bodhi-surface text-bodhi-muted opacity-50 cursor-not-allowed border border-BODHI-border'
+            }`}
+          >
+            {isCommitting ? (
+              <>
+                <RefreshCw size={13} className="animate-spin" />
+                <span>Committing...</span>
+              </>
+            ) : (
+              <>
+                <GitCommit size={13} />
+                <span>Commit Changes</span>
+              </>
+            )}
+          </button>
+
+          {/* Quick Undo Last Commit */}
+          {commitHistory.length > 0 && (
+            <button
+              onClick={undoLastCommit}
+              title="Undo Last Commit (soft reset)"
+              className="px-2 py-1.5 rounded bg-bodhi-surface hover:bg-BODHI-active border border-BODHI-border text-bodhi-muted hover:text-white transition-colors"
+            >
+              <Undo2 size={13} />
+            </button>
           )}
-        </button>
+        </div>
       </div>
 
       {/* Changes Accordions Container */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden py-1 space-y-1">
         {totalChanges === 0 ? (
           <div className="p-6 flex flex-col items-center justify-center text-center text-bodhi-muted">
-            <CheckCircle2 size={28} className="text-bodhi-accent mb-2 opacity-80" />
+            <CheckCircle2 size={26} className="text-bodhi-accent mb-2 opacity-80" />
             <span className="text-xs font-medium text-BODHI-text">Working tree clean</span>
             <span className="text-[11px] text-bodhi-muted mt-0.5">No changes to commit</span>
           </div>
@@ -336,7 +469,7 @@ export const SourceControlPanel: React.FC = () => {
                 >
                   <div className="flex items-center gap-1">
                     {isStagedOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                    <span className="tracking-wide">STAGED CHANGES</span>
+                    <span className="tracking-wide text-[11px]">STAGED CHANGES</span>
                   </div>
                   <div className="flex items-center gap-1">
                     <span className="px-1.5 py-0.2 rounded-full bg-bodhi-surface text-[10px] font-mono text-bodhi-accent">
@@ -372,7 +505,7 @@ export const SourceControlPanel: React.FC = () => {
                 >
                   <div className="flex items-center gap-1">
                     {isChangesOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                    <span className="tracking-wide">CHANGES</span>
+                    <span className="tracking-wide text-[11px]">CHANGES</span>
                   </div>
                   <div className="flex items-center gap-1">
                     <span className="px-1.5 py-0.2 rounded-full bg-bodhi-surface text-[10px] font-mono text-amber-400">
@@ -408,7 +541,7 @@ export const SourceControlPanel: React.FC = () => {
                 >
                   <div className="flex items-center gap-1">
                     {isUntrackedOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                    <span className="tracking-wide">UNTRACKED FILES</span>
+                    <span className="tracking-wide text-[11px]">UNTRACKED FILES</span>
                   </div>
                   <div className="flex items-center gap-1">
                     <span className="px-1.5 py-0.2 rounded-full bg-bodhi-surface text-[10px] font-mono text-emerald-400">
@@ -436,7 +569,152 @@ export const SourceControlPanel: React.FC = () => {
             )}
           </>
         )}
+
+        {/* 4. Stashes Accordion */}
+        <div className="border-t border-BODHI-border/60 pt-1">
+          <div
+            onClick={() => setIsStashOpen(!isStashOpen)}
+            className="flex items-center justify-between px-2 py-1 text-xs font-semibold text-bodhi-muted hover:text-BODHI-text cursor-pointer group"
+          >
+            <div className="flex items-center gap-1">
+              {isStashOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+              <Archive size={12} />
+              <span className="tracking-wide text-[11px]">STASHES</span>
+            </div>
+            <div className="flex items-center gap-1">
+              {stashes.length > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full bg-bodhi-surface text-[10px] font-mono text-bodhi-muted">
+                  {stashes.length}
+                </span>
+              )}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setShowStashInput(!showStashInput)
+                  setIsStashOpen(true)
+                }}
+                title="Stash Changes"
+                className="opacity-0 group-hover:opacity-100 p-0.5 hover:text-white rounded"
+              >
+                <Plus size={12} />
+              </button>
+            </div>
+          </div>
+
+          {isStashOpen && (
+            <div className="px-2 py-1 space-y-1">
+              {showStashInput && (
+                <div className="flex gap-1.5 p-1">
+                  <input
+                    type="text"
+                    placeholder="Stash message..."
+                    value={stashInput}
+                    onChange={(e) => setStashInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleCreateStash()
+                      if (e.key === 'Escape') setShowStashInput(false)
+                    }}
+                    className="flex-1 px-2 py-1 rounded bg-bodhi-surface border border-BODHI-border text-xs text-white focus:outline-none focus:border-bodhi-accent"
+                  />
+                  <button
+                    onClick={handleCreateStash}
+                    className="px-2 py-1 rounded bg-bodhi-accent text-black font-semibold text-xs"
+                  >
+                    Save
+                  </button>
+                </div>
+              )}
+
+              {stashes.length === 0 ? (
+                <div className="text-[11px] text-bodhi-muted/70 px-2 py-1 italic">
+                  No stashes saved
+                </div>
+              ) : (
+                stashes.map((s) => (
+                  <div
+                    key={s.index}
+                    className="group flex items-center justify-between px-2 py-1 rounded hover:bg-bodhi-surface text-xs"
+                  >
+                    <div className="truncate flex-1 mr-2">
+                      <span className="font-mono text-[10px] text-bodhi-accent mr-1.5">
+                        stash@&#123;{s.index}&#125;
+                      </span>
+                      <span className="text-white">{s.message || 'WIP on ' + branch}</span>
+                    </div>
+                    <div className="hidden group-hover:flex items-center gap-1">
+                      <button
+                        onClick={() => stashPop(s.index)}
+                        title="Pop stash (apply and drop)"
+                        className="px-1.5 py-0.5 rounded bg-bodhi-panel hover:bg-BODHI-active text-[10px] text-white"
+                      >
+                        Pop
+                      </button>
+                      <button
+                        onClick={() => stashDrop(s.index)}
+                        title="Drop stash"
+                        className="p-1 hover:text-rose-400 text-bodhi-muted rounded"
+                      >
+                        <Trash2 size={11} />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* 5. Commit History Accordion */}
+        <div className="border-t border-BODHI-border/60 pt-1">
+          <div
+            onClick={() => setIsHistoryOpen(!isHistoryOpen)}
+            className="flex items-center justify-between px-2 py-1 text-xs font-semibold text-bodhi-muted hover:text-BODHI-text cursor-pointer group"
+          >
+            <div className="flex items-center gap-1">
+              {isHistoryOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+              <History size={12} />
+              <span className="tracking-wide text-[11px]">COMMITS LOG</span>
+            </div>
+            {commitHistory.length > 0 && (
+              <span className="px-1.5 py-0.2 rounded-full bg-bodhi-surface text-[10px] font-mono text-bodhi-muted">
+                {commitHistory.length}
+              </span>
+            )}
+          </div>
+
+          {isHistoryOpen && (
+            <div className="px-2 py-1 space-y-1 max-h-60 overflow-y-auto">
+              {commitHistory.length === 0 ? (
+                <div className="text-[11px] text-bodhi-muted/70 px-2 py-1 italic">
+                  No commits yet
+                </div>
+              ) : (
+                commitHistory.map((c) => (
+                  <div
+                    key={c.hash}
+                    className="p-2 rounded hover:bg-bodhi-surface/70 border border-transparent hover:border-BODHI-border text-xs transition-colors space-y-0.5"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold text-white truncate max-w-[150px]">
+                        {c.message}
+                      </span>
+                      <span className="font-mono text-[10px] text-bodhi-accent">{c.shortHash}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-[10px] text-bodhi-muted">
+                      <span>{c.author}</span>
+                      <span>{c.relativeTime}</span>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+        </div>
       </div>
+
+      {/* Modal overlays */}
+      <PublishToGitHubModal />
+      <BranchSwitcherModal />
     </div>
   )
 }

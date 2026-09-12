@@ -6,29 +6,67 @@ import {
   GitFileStatus,
   GitFileStatusType,
   GitLineChurn,
-  GitFileChurnResult
+  GitFileChurnResult,
+  GitRemote,
+  GitBranchInfo,
+  GitSyncStatus,
+  GitStashItem,
+  GitCommitLogItem
 } from '../../shared/types'
 
-function runGit(args: string[], cwd: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(
-      'git',
-      args,
-      {
-        cwd,
-        maxBuffer: 10 * 1024 * 1024,
-        windowsHide: true
-      },
-      (error, stdout, stderr) => {
-        if (error) {
-          const err = new Error(stderr || stdout || error.message)
-          reject(err)
-        } else {
-          resolve(stdout)
+// Mutex queue per workspace to prevent .git/index.lock collisions during mutating operations
+const workspaceQueues = new Map<string, Promise<any>>()
+
+export function runGit(args: string[], cwd: string, isMutating = false): Promise<string> {
+  const execute = async (): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      execFile(
+        'git',
+        args,
+        {
+          cwd,
+          maxBuffer: 15 * 1024 * 1024,
+          windowsHide: true,
+          env: {
+            ...process.env,
+            GIT_TERMINAL_PROMPT: '0'
+          }
+        },
+        async (error, stdout, stderr) => {
+          if (error) {
+            const errOutput = stderr || stdout || error.message
+            // If index.lock collision, check if lockfile is stale (older than 6s) and purge it
+            if (errOutput.includes('index.lock')) {
+              try {
+                const lockPath = path.join(cwd, '.git', 'index.lock')
+                const stat = await fs.stat(lockPath).catch(() => null)
+                if (stat && Date.now() - stat.mtimeMs > 6000) {
+                  await fs.unlink(lockPath).catch(() => null)
+                  console.warn('[GitService] Purged stale .git/index.lock')
+                }
+              } catch {
+                // Ignore lock cleanup error
+              }
+            }
+            reject(new Error(errOutput))
+          } else {
+            resolve(stdout)
+          }
         }
-      }
-    )
-  })
+      )
+    })
+  }
+
+  if (isMutating && cwd) {
+    const prevQueue = workspaceQueues.get(cwd) || Promise.resolve()
+    const nextQueue = prevQueue
+      .catch(() => {})
+      .then(() => execute())
+    workspaceQueues.set(cwd, nextQueue)
+    return nextQueue
+  }
+
+  return execute()
 }
 
 export class GitService {
@@ -493,6 +531,450 @@ export class GitService {
     } catch (err) {
       console.error(`Failed to get file churn for ${relativePath}:`, err)
       return null
+    }
+  }
+
+  public async initRepo(workspacePath: string, defaultBranch = 'main'): Promise<boolean> {
+    if (!workspacePath) return false
+    try {
+      try {
+        await runGit(['init', '-b', defaultBranch], workspacePath, true)
+      } catch {
+        await runGit(['init'], workspacePath, true)
+        try {
+          await runGit(['checkout', '-b', defaultBranch], workspacePath, true)
+        } catch {
+          // Ignore fallback checkout error
+        }
+      }
+      return true
+    } catch (err) {
+      console.error('Failed to init repo:', err)
+      return false
+    }
+  }
+
+  public async createGitignore(workspacePath: string, templateType: string): Promise<boolean> {
+    if (!workspacePath) return false
+    const gitignorePath = path.join(workspacePath, '.gitignore')
+    let content = ''
+    switch (templateType.toLowerCase()) {
+      case 'node':
+        content = `# Dependencies\nnode_modules/\n.pnp\n.pnp.js\n\n# Production\ndist/\nout/\nbuild/\n\n# Environment\n.env\n.env.local\n.env.development.local\n.env.test.local\n.env.production.local\n\n# Logs\n*.log\nnpm-debug.log*\nyarn-debug.log*\nyarn-error.log*\n\n# System\n.DS_Store\nThumbs.db\n`
+        break
+      case 'python':
+        content = `# Byte-compiled / optimized / DLL files\n__pycache__/\n*.py[cod]\n*$py.class\n\n# Virtual Environments\n.env\n.venv\nenv/\nvenv/\nENV/\n\n# Distribution / packaging\ndist/\nbuild/\n*.egg-info/\n\n# System\n.DS_Store\nThumbs.db\n`
+        break
+      case 'rust':
+        content = `# Output\n/target/\n**/*.rs.bk\nCargo.lock\n\n# Environment\n.env\n\n# System\n.DS_Store\nThumbs.db\n`
+        break
+      default:
+        content = `# Dependencies & Builds\nnode_modules/\ndist/\nout/\nbuild/\ntarget/\n\n# Environment & Secrets\n.env\n.env.local\n*.pem\n*.key\n\n# Logs & OS\n*.log\n.DS_Store\nThumbs.db\n`
+        break
+    }
+
+    try {
+      let existing = ''
+      try {
+        existing = await fs.readFile(gitignorePath, 'utf8')
+      } catch {
+        // file does not exist yet
+      }
+      if (existing) {
+        content = `${existing.trim()}\n\n# Added by Bodhi\n${content}`
+      }
+      await fs.writeFile(gitignorePath, content, 'utf8')
+      return true
+    } catch (err) {
+      console.error('Failed to create .gitignore:', err)
+      return false
+    }
+  }
+
+  public async getRemotes(workspacePath: string): Promise<GitRemote[]> {
+    if (!workspacePath) return []
+    try {
+      const output = await runGit(['remote', '-v'], workspacePath)
+      const lines = output.split(/\r?\n/).filter((l) => l.trim())
+      const remoteMap = new Map<string, { fetchUrl: string; pushUrl: string }>()
+
+      for (const line of lines) {
+        const parts = line.split(/\s+/)
+        if (parts.length >= 3) {
+          const name = parts[0]
+          const url = parts[1]
+          const type = parts[2]
+
+          const curr = remoteMap.get(name) || { fetchUrl: '', pushUrl: '' }
+          if (type.includes('(fetch)')) {
+            curr.fetchUrl = url
+          } else if (type.includes('(push)')) {
+            curr.pushUrl = url
+          }
+          remoteMap.set(name, curr)
+        }
+      }
+
+      const remotes: GitRemote[] = []
+      for (const [name, urls] of remoteMap.entries()) {
+        remotes.push({
+          name,
+          fetchUrl: urls.fetchUrl || urls.pushUrl,
+          pushUrl: urls.pushUrl || urls.fetchUrl
+        })
+      }
+      return remotes
+    } catch {
+      return []
+    }
+  }
+
+  public async addRemote(workspacePath: string, name: string, url: string): Promise<boolean> {
+    if (!workspacePath || !name || !url) return false
+    try {
+      await runGit(['remote', 'add', name.trim(), url.trim()], workspacePath, true)
+      return true
+    } catch (err) {
+      console.error(`Failed to add remote ${name}:`, err)
+      return false
+    }
+  }
+
+  public async removeRemote(workspacePath: string, name: string): Promise<boolean> {
+    if (!workspacePath || !name) return false
+    try {
+      await runGit(['remote', 'remove', name.trim()], workspacePath, true)
+      return true
+    } catch (err) {
+      console.error(`Failed to remove remote ${name}:`, err)
+      return false
+    }
+  }
+
+  public async setRemoteUrl(workspacePath: string, name: string, url: string): Promise<boolean> {
+    if (!workspacePath || !name || !url) return false
+    try {
+      await runGit(['remote', 'set-url', name.trim(), url.trim()], workspacePath, true)
+      return true
+    } catch (err) {
+      console.error(`Failed to set remote url for ${name}:`, err)
+      return false
+    }
+  }
+
+  public async getBranches(workspacePath: string): Promise<GitBranchInfo[]> {
+    if (!workspacePath) return []
+    try {
+      const output = await runGit(['branch', '-a', '--no-color'], workspacePath)
+      const lines = output.split(/\r?\n/).filter((l) => l.trim())
+      const branches: GitBranchInfo[] = []
+
+      for (const line of lines) {
+        const isCurrent = line.startsWith('*')
+        let branchName = line.replace(/^[* ]\s*/, '').trim()
+
+        // Handle detached HEAD
+        if (branchName.startsWith('(HEAD detached')) {
+          continue
+        }
+
+        const isRemote = branchName.startsWith('remotes/')
+        if (isRemote) {
+          // Ignore HEAD pointers like remotes/origin/HEAD -> origin/main
+          if (branchName.includes(' -> ')) continue
+          branchName = branchName.replace(/^remotes\//, '')
+        }
+
+        branches.push({
+          name: branchName,
+          current: isCurrent,
+          remote: isRemote
+        })
+      }
+
+      return branches
+    } catch {
+      return []
+    }
+  }
+
+  public async checkoutBranch(
+    workspacePath: string,
+    branchName: string,
+    createNew = false
+  ): Promise<boolean> {
+    if (!workspacePath || !branchName) return false
+    try {
+      if (createNew) {
+        await runGit(['checkout', '-b', branchName.trim()], workspacePath, true)
+      } else {
+        await runGit(['checkout', branchName.trim()], workspacePath, true)
+      }
+      return true
+    } catch (err) {
+      console.error(`Failed to checkout branch ${branchName}:`, err)
+      return false
+    }
+  }
+
+  public async createBranch(workspacePath: string, branchName: string): Promise<boolean> {
+    if (!workspacePath || !branchName) return false
+    try {
+      await runGit(['branch', branchName.trim()], workspacePath, true)
+      return true
+    } catch (err) {
+      console.error(`Failed to create branch ${branchName}:`, err)
+      return false
+    }
+  }
+
+  public async deleteBranch(
+    workspacePath: string,
+    branchName: string,
+    force = false
+  ): Promise<boolean> {
+    if (!workspacePath || !branchName) return false
+    try {
+      await runGit(['branch', force ? '-D' : '-d', branchName.trim()], workspacePath, true)
+      return true
+    } catch (err) {
+      console.error(`Failed to delete branch ${branchName}:`, err)
+      return false
+    }
+  }
+
+  public async mergeBranch(
+    workspacePath: string,
+    branchName: string
+  ): Promise<{ success: boolean; message: string }> {
+    if (!workspacePath || !branchName) {
+      return { success: false, message: 'Invalid arguments' }
+    }
+    try {
+      const stdout = await runGit(['merge', branchName.trim()], workspacePath, true)
+      return { success: true, message: stdout.trim() || 'Merge successful' }
+    } catch (err: any) {
+      return { success: false, message: err.message || 'Merge conflict or failed' }
+    }
+  }
+
+  public async fetch(workspacePath: string, remote?: string): Promise<boolean> {
+    if (!workspacePath) return false
+    try {
+      await runGit(['fetch', remote || '--all'], workspacePath, true)
+      return true
+    } catch (err) {
+      console.error('Failed to fetch:', err)
+      return false
+    }
+  }
+
+  public async pull(
+    workspacePath: string,
+    remote?: string,
+    branch?: string
+  ): Promise<{ success: boolean; message: string }> {
+    if (!workspacePath) return { success: false, message: 'No workspace' }
+    try {
+      const args = ['pull']
+      if (remote) args.push(remote)
+      if (branch) args.push(branch)
+      const res = await runGit(args, workspacePath, true)
+      return { success: true, message: res.trim() || 'Pull successful' }
+    } catch (err: any) {
+      console.error('Failed to pull:', err)
+      return { success: false, message: err.message || 'Pull failed' }
+    }
+  }
+
+  public async push(
+    workspacePath: string,
+    remote = 'origin',
+    branch?: string,
+    setUpstream = false
+  ): Promise<{ success: boolean; message: string }> {
+    if (!workspacePath) return { success: false, message: 'No workspace' }
+    try {
+      const currentBranch = branch || (await this.getBranch(workspacePath)) || 'main'
+      const args = ['push']
+      if (setUpstream) {
+        args.push('-u', remote, currentBranch)
+      } else {
+        args.push(remote, currentBranch)
+      }
+      const res = await runGit(args, workspacePath, true)
+      return { success: true, message: res.trim() || 'Push successful' }
+    } catch (err: any) {
+      console.error('Failed to push:', err)
+      return { success: false, message: err.message || 'Push failed' }
+    }
+  }
+
+  public async getSyncStatus(workspacePath: string): Promise<GitSyncStatus> {
+    const defaultStatus: GitSyncStatus = {
+      ahead: 0,
+      behind: 0,
+      hasRemote: false,
+      upstream: null
+    }
+    if (!workspacePath) return defaultStatus
+
+    try {
+      const remotes = await this.getRemotes(workspacePath)
+      const hasRemote = remotes.length > 0
+      if (!hasRemote) {
+        return defaultStatus
+      }
+
+      let upstream: string | null = null
+      try {
+        const out = await runGit(
+          ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'],
+          workspacePath
+        )
+        upstream = out.trim() || null
+      } catch {
+        upstream = null
+      }
+
+      if (!upstream) {
+        return {
+          ahead: 0,
+          behind: 0,
+          hasRemote: true,
+          upstream: null
+        }
+      }
+
+      let ahead = 0
+      let behind = 0
+
+      try {
+        const aheadOut = await runGit(['rev-list', '--count', '@{u}..HEAD'], workspacePath)
+        ahead = parseInt(aheadOut.trim(), 10) || 0
+      } catch {
+        ahead = 0
+      }
+
+      try {
+        const behindOut = await runGit(['rev-list', '--count', 'HEAD..@{u}'], workspacePath)
+        behind = parseInt(behindOut.trim(), 10) || 0
+      } catch {
+        behind = 0
+      }
+
+      return {
+        ahead,
+        behind,
+        hasRemote: true,
+        upstream
+      }
+    } catch {
+      return defaultStatus
+    }
+  }
+
+  public async stashSave(workspacePath: string, message?: string): Promise<boolean> {
+    if (!workspacePath) return false
+    try {
+      const args = ['stash', 'push']
+      if (message && message.trim()) {
+        args.push('-m', message.trim())
+      }
+      await runGit(args, workspacePath, true)
+      return true
+    } catch (err) {
+      console.error('Failed to stash:', err)
+      return false
+    }
+  }
+
+  public async stashPop(workspacePath: string, index = 0): Promise<boolean> {
+    if (!workspacePath) return false
+    try {
+      await runGit(['stash', 'pop', `stash@{${index}}`], workspacePath, true)
+      return true
+    } catch (err) {
+      console.error(`Failed to pop stash index ${index}:`, err)
+      return false
+    }
+  }
+
+  public async stashList(workspacePath: string): Promise<GitStashItem[]> {
+    if (!workspacePath) return []
+    try {
+      const out = await runGit(['stash', 'list', '--pretty=format:%gd|%h|%s|%cr'], workspacePath)
+      const lines = out.split(/\r?\n/).filter((l) => l.trim())
+      const stashes: GitStashItem[] = []
+
+      for (let i = 0; i < lines.length; i++) {
+        const parts = lines[i].split('|')
+        if (parts.length >= 4) {
+          const indexMatch = parts[0].match(/stash@\{(\d+)\}/)
+          const index = indexMatch ? parseInt(indexMatch[1], 10) : i
+          stashes.push({
+            index,
+            hash: parts[1],
+            message: parts[2],
+            date: parts[3]
+          })
+        }
+      }
+      return stashes
+    } catch {
+      return []
+    }
+  }
+
+  public async stashDrop(workspacePath: string, index = 0): Promise<boolean> {
+    if (!workspacePath) return false
+    try {
+      await runGit(['stash', 'drop', `stash@{${index}}`], workspacePath, true)
+      return true
+    } catch (err) {
+      console.error(`Failed to drop stash index ${index}:`, err)
+      return false
+    }
+  }
+
+  public async getCommitLog(workspacePath: string, maxCount = 50): Promise<GitCommitLogItem[]> {
+    if (!workspacePath) return []
+    try {
+      const out = await runGit(
+        ['log', `-n${maxCount}`, '--pretty=format:%H|%h|%an|%ae|%aI|%ar|%s'],
+        workspacePath
+      )
+      const lines = out.split(/\r?\n/).filter((l) => l.trim())
+      const commits: GitCommitLogItem[] = []
+
+      for (const line of lines) {
+        const parts = line.split('|')
+        if (parts.length >= 7) {
+          commits.push({
+            hash: parts[0],
+            shortHash: parts[1],
+            author: parts[2],
+            email: parts[3],
+            date: parts[4],
+            relativeTime: parts[5],
+            message: parts.slice(6).join('|')
+          })
+        }
+      }
+      return commits
+    } catch {
+      return []
+    }
+  }
+
+  public async undoLastCommit(workspacePath: string): Promise<boolean> {
+    if (!workspacePath) return false
+    try {
+      await runGit(['reset', '--soft', 'HEAD~1'], workspacePath, true)
+      return true
+    } catch (err) {
+      console.error('Failed to undo last commit:', err)
+      return false
     }
   }
 }

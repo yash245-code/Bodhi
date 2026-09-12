@@ -158,6 +158,79 @@ const api: BodhiAPI = {
     ipcRenderer.invoke(IPC_CHANNELS.GIT_COMMIT, workspacePath, message),
   gitGetFileChurn: (workspacePath: string, relativePath: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.GIT_GET_FILE_CHURN, workspacePath, relativePath),
+  gitInit: (workspacePath: string, defaultBranch?: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GIT_INIT, workspacePath, defaultBranch),
+  gitCreateGitignore: (workspacePath: string, templateType: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GIT_CREATE_GITIGNORE, workspacePath, templateType),
+  gitGetRemotes: (workspacePath: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GIT_GET_REMOTES, workspacePath),
+  gitAddRemote: (workspacePath: string, name: string, url: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GIT_ADD_REMOTE, workspacePath, name, url),
+  gitRemoveRemote: (workspacePath: string, name: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GIT_REMOVE_REMOTE, workspacePath, name),
+  gitSetRemoteUrl: (workspacePath: string, name: string, url: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GIT_SET_REMOTE_URL, workspacePath, name, url),
+  gitGetBranches: (workspacePath: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GIT_GET_BRANCHES, workspacePath),
+  gitCheckoutBranch: (workspacePath: string, branchName: string, createNew?: boolean) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GIT_CHECKOUT_BRANCH, workspacePath, branchName, createNew),
+  gitCreateBranch: (workspacePath: string, branchName: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GIT_CREATE_BRANCH, workspacePath, branchName),
+  gitDeleteBranch: (workspacePath: string, branchName: string, force?: boolean) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GIT_DELETE_BRANCH, workspacePath, branchName, force),
+  gitMergeBranch: (workspacePath: string, branchName: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GIT_MERGE_BRANCH, workspacePath, branchName),
+  gitFetch: (workspacePath: string, remote?: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GIT_FETCH, workspacePath, remote),
+  gitPull: (workspacePath: string, remote?: string, branch?: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GIT_PULL, workspacePath, remote, branch),
+  gitPush: (workspacePath: string, remote?: string, branch?: string, setUpstream?: boolean) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GIT_PUSH, workspacePath, remote, branch, setUpstream),
+  gitGetSyncStatus: (workspacePath: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GIT_GET_SYNC_STATUS, workspacePath),
+  gitStashSave: (workspacePath: string, message?: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GIT_STASH_SAVE, workspacePath, message),
+  gitStashPop: (workspacePath: string, index?: number) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GIT_STASH_POP, workspacePath, index),
+  gitStashList: (workspacePath: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GIT_STASH_LIST, workspacePath),
+  gitStashDrop: (workspacePath: string, index?: number) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GIT_STASH_DROP, workspacePath, index),
+  gitGetCommitLog: (workspacePath: string, maxCount?: number) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GIT_GET_COMMIT_LOG, workspacePath, maxCount),
+  gitUndoCommit: (workspacePath: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GIT_UNDO_COMMIT, workspacePath),
+
+  // GitHub Integration
+  githubValidateToken: (token: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GITHUB_VALIDATE_TOKEN, token),
+  githubPublishRepo: (workspacePath, options, token) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GITHUB_PUBLISH_REPO, workspacePath, options, token),
+  githubGetUserRepos: (token) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GITHUB_GET_USER_REPOS, token),
+  githubGetStoredToken: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.GITHUB_GET_STORED_TOKEN),
+  githubSetStoredToken: (token: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GITHUB_SET_STORED_TOKEN, token),
+  githubClearStoredToken: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.GITHUB_CLEAR_STORED_TOKEN),
+
+  // User Authentication
+  authLoginGoogle: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUTH_LOGIN_GOOGLE),
+  authLogout: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUTH_LOGOUT),
+  authGetCurrentUser: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUTH_GET_CURRENT_USER),
+  onAuthStateChanged: (callback) => {
+    const subscription = (_event: IpcRendererEvent, user: any): void => {
+      callback(user)
+    }
+    ipcRenderer.on(IPC_CHANNELS.AUTH_STATE_CHANGED, subscription)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.AUTH_STATE_CHANGED, subscription)
+    }
+  },
 
   // Extensions
   extensionsGetInstalled: () =>
@@ -193,7 +266,38 @@ const api: BodhiAPI = {
   aiChat: (req) =>
     ipcRenderer.invoke(IPC_CHANNELS.AI_CHAT, req),
   aiTestConnection: (provider, apiKey) =>
-    ipcRenderer.invoke(IPC_CHANNELS.AI_TEST_CONNECTION, provider, apiKey)
+    ipcRenderer.invoke(IPC_CHANNELS.AI_TEST_CONNECTION, provider, apiKey),
+
+  // PostgreSQL Database & Cloud Sync
+  dbTestConnection: (connectionString: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.DB_TEST_CONNECTION, connectionString),
+  dbConnect: (connectionString: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.DB_CONNECT, connectionString),
+  dbDisconnect: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.DB_DISCONNECT),
+  dbGetStatus: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.DB_GET_STATUS),
+  dbSyncSettings: (userId: string, settings: any) =>
+    ipcRenderer.invoke(IPC_CHANNELS.DB_SYNC_SETTINGS, userId, settings),
+  dbGetSettings: (userId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.DB_GET_SETTINGS, userId),
+  dbSaveSnippet: (userId: string, snippet: any) =>
+    ipcRenderer.invoke(IPC_CHANNELS.DB_SAVE_SNIPPET, userId, snippet),
+  dbGetSnippets: (userId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.DB_GET_SNIPPETS, userId),
+  dbSaveAiChat: (userId: string, chat: any) =>
+    ipcRenderer.invoke(IPC_CHANNELS.DB_SAVE_AI_CHAT, userId, chat),
+  dbGetAiChats: (userId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.DB_GET_AI_CHATS, userId),
+  onDbStatusChanged: (callback) => {
+    const subscription = (_event: IpcRendererEvent, status: any): void => {
+      callback(status)
+    }
+    ipcRenderer.on(IPC_CHANNELS.DB_STATUS_CHANGED, subscription)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.DB_STATUS_CHANGED, subscription)
+    }
+  }
 }
 
 try {
