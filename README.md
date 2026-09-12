@@ -120,7 +120,7 @@ graph TB
         direction TB
         AppLifecycle["⚡ App Lifecycle & Window Manager<br/>(Main Window, Settings & Extensions Modals)"]
         
-        subgraph Backend_Services ["Native Backend Services (`backend/services/`)"]
+        subgraph Backend_Services ["Native Backend Services (backend/services/)"]
             FileSvc["📁 FileService<br/>• Disk I/O & Traversal<br/>• Chokidar Live Watcher"]
             TermSvc["💻 TerminalService<br/>• node-pty Native Bridge<br/>• Multi-shell PTY Sessions"]
             GitSvc["🔀 GitService<br/>• CLI Status / Stage / Commit<br/>• Line Churn Heatmap Engine"]
@@ -130,19 +130,19 @@ graph TB
             SearchSvc["🔍 SearchService<br/>• Workspace Regex Search<br/>• Batch File Replacements"]
         end
 
-        IPCHandlers["📡 Secure IPC Handler Layer (`backend/ipcHandlers.ts`)"]
+        IPCHandlers["📡 Secure IPC Handler Layer (backend/ipcHandlers.ts)"]
         AppLifecycle --> Backend_Services
         Backend_Services <--> IPCHandlers
     end
 
-    subgraph Security_Boundary ["🛡️ Context Isolation Boundary (`preload/`)"]
-        PreloadBridge["🔒 BodhiAPI Context Bridge (`preload/index.ts`)<br/>• Strongly-typed Promises<br/>• Unidirectional Event Listeners<br/>• Zero Raw Node.js Exposure in Renderer"]
+    subgraph Security_Boundary ["🛡️ Context Isolation Boundary (preload/)"]
+        PreloadBridge["🔒 BodhiAPI Context Bridge (preload/index.ts)<br/>• Strongly-typed Promises<br/>• Unidirectional Event Listeners<br/>• Zero Raw Node.js Exposure in Renderer"]
     end
 
-    subgraph Renderer_Process ["🎨 Renderer Layer (`frontend/src/` — React 18 + Monaco + Zustand)"]
+    subgraph Renderer_Process ["🎨 Renderer Layer (frontend/src/ - React 18 + Monaco + Zustand)"]
         direction TB
         
-        subgraph Global_Stores ["State Management (`frontend/src/store/`)"]
+        subgraph Global_Stores ["State Management (frontend/src/store/)"]
             StoreEditor["useEditorStore<br/>(Tabs, Buffers, Layout)"]
             StoreWorkspace["useWorkspaceStore<br/>(File Tree, Watchers)"]
             StoreGit["useGitStore<br/>(Status, Staging, Diffs)"]
@@ -164,8 +164,8 @@ graph TB
         Global_Stores <--> UI_Modules
     end
 
-    IPCHandlers <==>|Typed IPC Channels (`shared/constants.ts`)| PreloadBridge
-    PreloadBridge <==>|window.bodhiAPI (`shared/types.ts`)| Global_Stores
+    IPCHandlers <==>|Typed IPC Channels| PreloadBridge
+    PreloadBridge <==>|window.bodhiAPI| Global_Stores
 ```
 
 ---
