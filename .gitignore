@@ -59,4 +59,7 @@ coverage/
 
 # Project-specific exclusions
 docs/
-resources/
+resources/*
+!resources/banner.svg
+!resources/icon*
+!resources/TERMS.txt
